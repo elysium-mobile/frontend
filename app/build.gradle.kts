@@ -34,7 +34,7 @@ android {
         // when a developer hasn't created secrets.properties yet.
         buildConfigField("String", "BACKEND_BASE_URL", "\"${System.getenv("BACKEND_BASE_URL") ?: properties.getProperty("backend.base.url", "")}\"")
         buildConfigField("String", "API_KEY_GEMINI", "\"${System.getenv("API_KEY_GEMINI") ?: properties.getProperty("api.key.gemini", "")}\"")
-        buildConfigField("String", "API_KEY_GMAIL", "\"${System.getenv("API_KEY_GMAIL") ?: properties.getProperty("api.key.gmail", "")}\"")
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT", "\"${System.getenv("GOOGLE_OAUTH_CLIENT") ?: properties.getProperty("google.oauth.client", "")}\"")
         buildConfigField("String", "API_KEY_EXTERNAL_SERVICE", "\"${System.getenv("API_KEY_EXTERNAL_SERVICE") ?: properties.getProperty("api.key.external.service", "")}\"")
     }
 
@@ -90,6 +90,14 @@ dependencies {
 
     // AppCompat (required for AppCompatDelegate.setApplicationLocales back-port)
     implementation(libs.androidx.appcompat)
+
+    // Native Google Sign-In via the Credential Manager (the native Gmail identity handshake —
+    // the only external identity path the client is permitted to touch directly). The
+    // play-services-auth artifact provides the Google ID credential provider; `googleid` exposes
+    // GetSignInWithGoogleOption / GoogleIdTokenCredential.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
 
     // Firebase BoM
     implementation(platform(libs.firebase.bom))

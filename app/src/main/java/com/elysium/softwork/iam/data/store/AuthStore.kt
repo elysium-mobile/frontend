@@ -1,5 +1,6 @@
 package com.elysium.softwork.iam.data.store
 
+import android.content.Context
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
 import kotlinx.coroutines.flow.StateFlow
@@ -49,6 +50,18 @@ interface AuthStore {
      * supplies the email server-side, and only the display [name] is collected on-device.
      */
     suspend fun registerWithGoogle(name: String): Result<User>
+
+    /**
+     * Triggers the native **Credential Manager** Google sign-in tray, then routes the resolved
+     * identity through the dual-auth backend sequence.
+     *
+     * [context] must be an **Activity** context — Credential Manager needs it to display the
+     * account-picker UI, so it is passed per-call and never retained (the store is a process-wide
+     * singleton). On success the resolved email / display name / id-token are sent to the backend
+     * and the session is persisted as Google-linked. A user cancellation or credential error is
+     * surfaced through the [Result] failure channel for the presentation layer to show.
+     */
+    suspend fun signInWithGoogle(context: Context): Result<User>
 
     /**
      * Re-runs `sign-in` with the credentials persisted at the last successful login to obtain

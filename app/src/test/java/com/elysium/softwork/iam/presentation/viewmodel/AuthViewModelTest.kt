@@ -4,6 +4,7 @@ import com.elysium.softwork.iam.application.AuthState
 import com.elysium.softwork.iam.application.usecase.LoginUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterWithGoogleUseCase
+import com.elysium.softwork.iam.application.usecase.SignInWithGoogleUseCase
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.testsupport.FakeAuthStore
 import com.elysium.softwork.testsupport.MainDispatcherRule
@@ -53,6 +54,7 @@ class AuthViewModelTest {
             loginUseCase = LoginUseCase(store),
             registerUseCase = RegisterUseCase(store),
             registerWithGoogleUseCase = RegisterWithGoogleUseCase(store),
+            signInWithGoogleUseCase = SignInWithGoogleUseCase(store),
         )
 
     // region Form state

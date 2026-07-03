@@ -1,5 +1,6 @@
 package com.elysium.softwork.testsupport
 
+import android.content.Context
 import com.elysium.softwork.iam.data.store.AuthStore
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
@@ -35,6 +36,7 @@ open class FakeAuthStore(
     var nextRegisterResult: Result<User> = Result.success(DEFAULT_USER),
     var nextRegisterWithGoogleResult: Result<User> = Result.success(DEFAULT_USER),
     var nextReauthenticateResult: Result<User> = Result.success(DEFAULT_USER),
+    var nextSignInWithGoogleResult: Result<User> = Result.success(DEFAULT_USER),
 ) : AuthStore {
 
     /** Number of times each method has been invoked. Useful for "called exactly once" assertions. */
@@ -94,6 +96,14 @@ open class FakeAuthStore(
         registerWithGoogleInvocations += 1
         lastRegisterWithGoogleArg = name
         return nextRegisterWithGoogleResult
+    }
+
+    var signInWithGoogleInvocations: Int = 0
+        private set
+
+    override suspend fun signInWithGoogle(context: Context): Result<User> {
+        signInWithGoogleInvocations += 1
+        return nextSignInWithGoogleResult
     }
 
     override suspend fun reauthenticate(): Result<User> {

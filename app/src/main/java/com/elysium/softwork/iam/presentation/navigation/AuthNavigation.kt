@@ -72,7 +72,8 @@ fun AuthNavHost(
                 // host, which mounts the payment onboarding gate when no active membership.
                 onMembershipRequired = onAuthComplete,
                 onNavigateToRegister = { navController.navigate(AuthRoutes.REGISTER) },
-                onNavigateToRegisterWithGoogle = { navController.navigate(AuthRoutes.REGISTER_GOOGLE) },
+                // "Continue with Google" now triggers the native Credential Manager tray inside
+                // LoginScreen (via the ViewModel), so it no longer navigates to a separate screen.
                 onForgotPassword = { /* Forgot-password flow is not yet implemented. */ },
             )
         }

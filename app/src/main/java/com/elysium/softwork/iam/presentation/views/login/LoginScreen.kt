@@ -1,5 +1,8 @@
 package com.elysium.softwork.iam.presentation.views.login
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +61,6 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * @param onMembershipRequired invoked when authentication succeeds but the membership is not
  *   active — the host routes straight into the payment onboarding gate.
  * @param onNavigateToRegister opens the standard register flow.
- * @param onNavigateToRegisterWithGoogle opens the Gmail-registration flow.
  * @param onForgotPassword opens the forgot-password flow (currently a no-op placeholder).
  */
 @Composable
@@ -65,13 +68,17 @@ fun LoginScreen(
     onLoginSuccess: () -> Unit,
     onMembershipRequired: () -> Unit,
     onNavigateToRegister: () -> Unit,
-    onNavigateToRegisterWithGoogle: () -> Unit,
     onForgotPassword: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AuthViewModel = viewModel(factory = AuthViewModel.Factory),
 ) {
     val state: AuthState by viewModel.state.collectAsStateWithLifecycle()
     val form: AuthViewModel.FormState by viewModel.form.collectAsStateWithLifecycle()
+    // Activity context for the Credential Manager account-picker tray. `LocalContext.current`
+    // may be a themed `ContextWrapper` rather than the Activity itself; the tray is a window,
+    // so it must receive the real root `Activity` or rendering drops. `findActivity()` walks the
+    // wrapper chain to unwrap it.
+    val activity: Activity? = LocalContext.current.findActivity()
 
     LaunchedEffect(state) {
         when (state) {
@@ -192,7 +199,7 @@ fun LoginScreen(
         Spacer(Modifier.height(12.dp))
 
         GoogleOutlineButton(
-            onClick = onNavigateToRegisterWithGoogle,
+            onClick = { activity?.let(viewModel::submitSignInWithGoogle) },
             enabled = state !is AuthState.Loading,
         )
 
@@ -231,3 +238,16 @@ private fun ErrorText(message: String) {
 /** Tiny helper to keep clickable text declarations terse. */
 private fun Modifier.clickableText(onClick: () -> Unit): Modifier =
     this.padding(vertical = 4.dp).clickable(onClick = onClick)
+
+/**
+ * Unwraps a Compose [Context] down to its host [Activity]. `LocalContext.current` is often a
+ * themed [ContextWrapper] rather than the Activity itself; the Credential Manager tray is a
+ * window and must be anchored to the real Activity or it silently fails to render. Walks the
+ * `baseContext` chain and returns `null` if no Activity is found (defensive — should not happen
+ * inside a normal Activity-hosted composable).
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

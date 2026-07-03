@@ -1,5 +1,6 @@
 package com.elysium.softwork.iam.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +11,7 @@ import com.elysium.softwork.iam.application.AuthValidation
 import com.elysium.softwork.iam.application.usecase.LoginUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterWithGoogleUseCase
+import com.elysium.softwork.iam.application.usecase.SignInWithGoogleUseCase
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.data.network.BadRequestException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,11 +36,13 @@ import kotlinx.coroutines.launch
  * @param loginUseCase signs the worker in with corporate credentials.
  * @param registerUseCase registers a new employee account.
  * @param registerWithGoogleUseCase registers a Google-linked employee (same backend endpoint).
+ * @param signInWithGoogleUseCase triggers the native Credential Manager Google sign-in tray.
  */
 class AuthViewModel(
     private val loginUseCase: LoginUseCase,
     private val registerUseCase: RegisterUseCase,
     private val registerWithGoogleUseCase: RegisterWithGoogleUseCase,
+    private val signInWithGoogleUseCase: SignInWithGoogleUseCase,
 ) : ViewModel() {
 
     /** Snapshot of the current form. Updated via the `on*Change` handlers. */
@@ -136,6 +140,21 @@ class AuthViewModel(
         if (!current.isUsernameValid) return
         runRequest { registerWithGoogleUseCase(name = current.username) }
     }
+
+    /**
+     * Triggers the native Google (Credential Manager) sign-in tray and routes the resolved
+     * identity through the backend. Branches [AuthState.Success] vs [AuthState.MembershipRequired]
+     * on the membership flag, like [submitLogin]. A cancellation / credential error lands on
+     * [AuthState.Error]. [context] must be an Activity context (supplied by the screen).
+     */
+    fun submitSignInWithGoogle(context: Context) {
+        runRequest(
+            onSuccess = { user ->
+                if (user.isMembershipActive()) AuthState.Success(user)
+                else AuthState.MembershipRequired(user)
+            },
+        ) { signInWithGoogleUseCase(context) }
+    }
     // endregion
 
     /**
@@ -196,6 +215,7 @@ class AuthViewModel(
                     loginUseCase = LoginUseCase(store),
                     registerUseCase = RegisterUseCase(store),
                     registerWithGoogleUseCase = RegisterWithGoogleUseCase(store),
+                    signInWithGoogleUseCase = SignInWithGoogleUseCase(store),
                 ) as T
             }
         }

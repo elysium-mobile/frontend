@@ -1091,6 +1091,33 @@ server-side, so the device sends only the display name).
   - Replaced the interim list-based `getMemberships()` / `GetMembershipsUseCase` with the FK
     `getMembership(id)` / `ValidateMembershipUseCase`. `FakeMembershipStore` exposes
     `nextMembershipResult`.
+- **Native Google Sign-In via Credential Manager.** "Continue with Google" on `LoginScreen` now
+  triggers the system account-picker tray directly (previously it just navigated to a name-only
+  form and never showed the modal). Flow:
+  - `AuthStore.signInWithGoogle(context)` / `AuthStoreImpl` build a `GetSignInWithGoogleOption`
+    (the **exclusive** sign-in option — forces the account-picker drawer on every tap, unlike
+    `GetGoogleIdOption`'s passive authorized-account lookup;
+    `serverClientId = BuildConfig.GOOGLE_OAUTH_CLIENT`, injected by the Secrets plugin — no literal),
+    call `CredentialManager.create(context).getCredential(context, request)`, and parse the
+    `GoogleIdTokenCredential` (email `.id`, `.displayName`, `.idToken`). The **Activity** context
+    is passed per-call (never retained — the store is a singleton).
+  - `SignInWithGoogleUseCase` → `AuthViewModel.submitSignInWithGoogle(context)` (branches
+    `Success` vs `MembershipRequired` like login); `LoginScreen` unwraps `LocalContext.current`
+    to its host `Activity` via a `findActivity()` chain walk (the tray is a window and must be
+    anchored to the real Activity, not a themed `ContextWrapper`) before invoking the button. A
+    cancellation / `GetCredentialException` is caught by the store's `runCatching` and surfaced on
+    `AuthState.Error`.
+  - **Backend gap (flagged):** the API exposes **no** Google/id-token endpoint (auth is only
+    `sign-in` + `sign-up/employee`; the only backend "Google" is Gemini). So the resolved identity
+    is routed through the existing `sign-up/employee` dual-auth path, sending the real `email` +
+    `name` + a new snake_case `User.id_token` (forward-compat; the backend ignores unknown keys).
+    Until a real Google endpoint exists, this 400s on the other `@NotBlank` sign-up fields
+    (`dni`/…), surfaced inline — same limitation as the existing minimal registration.
+  - **New dependencies** (rationale): `androidx.credentials:credentials` +
+    `:credentials-play-services-auth` and `com.google.android.libraries.identity.googleid:googleid`
+    — the native Gmail identity handshake (the sole external identity path the client may touch).
+    `LoginScreen` dropped its now-unused `onNavigateToRegisterWithGoogle` param; `FakeAuthStore` /
+    `AuthViewModelTest` updated for the new use case.
 
 ### ✅ Phase 10 — Feedback backend integration against the live Spring Boot API
 
@@ -1448,7 +1475,7 @@ and exposed to Kotlin through `BuildConfig` fields.
 |---|---|---|
 | `BACKEND_BASE_URL` | `BuildConfig.BACKEND_BASE_URL` | `ApiClient.retrofit` base URL — fail-fast if blank |
 | `API_KEY_GEMINI` | `BuildConfig.API_KEY_GEMINI` | `ApiKeyInterceptor` → `x-goog-api-key` header on `generativelanguage.googleapis.com` |
-| `API_KEY_GMAIL` | `BuildConfig.API_KEY_GMAIL` | Reserved for future Gmail integration |
+| `GOOGLE_OAUTH_CLIENT` | `BuildConfig.GOOGLE_OAUTH_CLIENT` | Google Cloud Web Application **OAuth client id** — `serverClientId` for the Credential Manager `GetSignInWithGoogleOption` (native Google Sign-In). Renamed from the legacy `API_KEY_GMAIL` alias. |
 | `API_KEY_EXTERNAL_SERVICE` | `BuildConfig.API_KEY_EXTERNAL_SERVICE` | `ApiKeyInterceptor` → `X-Api-Key` header on the configured external host |
 
 ### CI / pipelines

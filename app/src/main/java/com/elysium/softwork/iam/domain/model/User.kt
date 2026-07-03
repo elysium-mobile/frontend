@@ -76,6 +76,9 @@ data class User(
     val user_id: Long? = null,
     val membership_id: Long? = null,
     val company_id: Long? = null,
+
+    // --- Native Google (Credential Manager) identity handshake ---
+    val id_token: String? = null,
 ) {
 
     /**

@@ -1,11 +1,17 @@
 package com.elysium.softwork.iam.data.store
 
+import android.content.Context
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import com.elysium.softwork.BuildConfig
 import com.elysium.softwork.iam.data.network.AuthWebService
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
 import com.elysium.softwork.shared.data.network.BadRequestResponse
 import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -82,6 +88,46 @@ class AuthStoreImpl(
         persistSessionAndSyncProfile(
             user,
             email = user.email.orEmpty(),
+            password = "",
+            googleLinked = true,
+        )
+        user
+    }
+
+    override suspend fun signInWithGoogle(context: Context): Result<User> = runCatching {
+        // 1. Build the credential request with the EXCLUSIVE sign-in option. Unlike
+        //    GetGoogleIdOption (which offers passive/autofill authorized-account lookup),
+        //    GetSignInWithGoogleOption forces the full account-picker drawer on every tap. The
+        //    web client id is injected at compile time via the Secrets Gradle Plugin
+        //    (BuildConfig.GOOGLE_OAUTH_CLIENT) — never a literal.
+        val googleOption = GetSignInWithGoogleOption.Builder(BuildConfig.GOOGLE_OAUTH_CLIENT)
+            .build()
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(googleOption)
+            .build()
+
+        // 2. Show the native account-picker tray (needs the Activity context) and parse the
+        //    Google ID token credential. A cancellation / error throws a GetCredentialException,
+        //    caught by runCatching and surfaced as Result.failure for the UiState.
+        val response = CredentialManager.create(context).getCredential(context, request)
+        val googleCredential = GoogleIdTokenCredential.createFrom(response.credential.data)
+
+        // 3. Route the resolved identity through the dual-auth backend sequence. The backend has
+        //    no dedicated Google/id-token endpoint, so this reuses `sign-up/employee`, sending the
+        //    real email + display name (uniform snake_case) plus the id_token for forward
+        //    compatibility; the account is resolved by email server-side.
+        val user = unwrap(
+            webService.signUpEmployee(
+                User(
+                    email = googleCredential.id,
+                    name = googleCredential.displayName,
+                    id_token = googleCredential.idToken,
+                ),
+            ),
+        )
+        persistSessionAndSyncProfile(
+            user,
+            email = googleCredential.id,
             password = "",
             googleLinked = true,
         )
