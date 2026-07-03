@@ -5,7 +5,11 @@ import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
 import com.elysium.softwork.shared.data.network.BadRequestResponse
+import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
 import com.google.gson.Gson
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import retrofit2.Response
 
 /**
@@ -30,9 +34,32 @@ class AuthStoreImpl(
     private val gson: Gson,
 ) : AuthStore {
 
+    /** Backing state for [sessionRecovery]. Set by [invalidateSession] on a mid-session 401. */
+    private val _sessionRecovery: MutableStateFlow<SessionRecovery> =
+        MutableStateFlow(SessionRecovery.NONE)
+    override val sessionRecovery: StateFlow<SessionRecovery> = _sessionRecovery.asStateFlow()
+
+    override fun invalidateSession() {
+        // Capture how the dying session authenticated BEFORE wiping it — a Google-linked session
+        // stores no local password and must recover through the Gmail handshake, not the
+        // credentials form.
+        val recovery =
+            if (prefs.getBoolean(SharedPrefsManager.KEY_GOOGLE_SESSION)) SessionRecovery.GOOGLE
+            else SessionRecovery.CREDENTIALS
+        // Wipe the dead session first so no subsequent request replays the rejected token, then
+        // raise the signal the router observes. StateFlow dedups equal values, so a burst of
+        // concurrent 401s (multiple in-flight authenticated calls) collapses to one emission.
+        clearSession()
+        _sessionRecovery.value = recovery
+    }
+
+    override fun consumeSessionInvalidation() {
+        _sessionRecovery.value = SessionRecovery.NONE
+    }
+
     override suspend fun login(email: String, password: String): Result<User> = runCatching {
         val user = unwrap(webService.signIn(User(email = email, password = password)))
-        persistSessionAndSyncProfile(user, email, password)
+        persistSessionAndSyncProfile(user, email, password, googleLinked = false)
         user
     }
 
@@ -41,7 +68,7 @@ class AuthStoreImpl(
             val user = unwrap(
                 webService.signUpEmployee(User(name = name, email = email, password = password)),
             )
-            persistSessionAndSyncProfile(user, email, password)
+            persistSessionAndSyncProfile(user, email, password, googleLinked = false)
             user
         }
 
@@ -51,7 +78,12 @@ class AuthStoreImpl(
         // for a Google-linked account, so the persisted credential is left blank — a later
         // session renewal goes through Google, not [reauthenticate].
         val user = unwrap(webService.signUpEmployee(User(name = name)))
-        persistSessionAndSyncProfile(user, email = user.gmail ?: user.email.orEmpty(), password = "")
+        persistSessionAndSyncProfile(
+            user,
+            email = user.gmail ?: user.email.orEmpty(),
+            password = "",
+            googleLinked = true,
+        )
         user
     }
 
@@ -122,7 +154,12 @@ class AuthStoreImpl(
      * The token is mandatory; its absence aborts the flow as a failure. The profile sync is
      * best-effort — a profile lookup hiccup must not invalidate an otherwise good session.
      */
-    private suspend fun persistSessionAndSyncProfile(user: User, email: String, password: String) {
+    private suspend fun persistSessionAndSyncProfile(
+        user: User,
+        email: String,
+        password: String,
+        googleLinked: Boolean,
+    ) {
         val token = user.token ?: error("Authentication response is missing the token")
         // Persist the JWT to KEY_AUTH_TOKEN. The OkHttp AuthInterceptor reads this key live on
         // every subsequent request, so the sequential employee-profile lookup and the later
@@ -130,7 +167,13 @@ class AuthStoreImpl(
         prefs.putString(SharedPrefsManager.KEY_AUTH_TOKEN, token)
         prefs.putString(SharedPrefsManager.KEY_USER_EMAIL, email)
         prefs.putString(SharedPrefsManager.KEY_USER_PASSWORD, password)
+        prefs.putBoolean(SharedPrefsManager.KEY_GOOGLE_SESSION, googleLinked)
         user.id?.let { prefs.putLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID, it) }
+
+        // A brand-new session re-arms the 401 trap: clear any invalidation left over from a
+        // prior session before the first authenticated call goes out. The employee-profile sync
+        // below is intentionally trap-exempt (see AuthInterceptor), so it cannot re-raise this.
+        _sessionRecovery.value = SessionRecovery.NONE
 
         user.id?.let { accountId -> syncEmployeeProfile(accountId) }
     }

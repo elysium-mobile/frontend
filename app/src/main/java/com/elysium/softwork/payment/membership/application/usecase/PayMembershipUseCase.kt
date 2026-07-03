@@ -65,6 +65,5 @@ class PayMembershipUseCase(
 
         // Synchronous token refresh from the cached credentials (no refresh endpoint exists).
         authStore.reauthenticate()
-        Unit
     }
 }

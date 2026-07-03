@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,11 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.elysium.softwork.iam.presentation.navigation.AuthNavHost
+import com.elysium.softwork.iam.presentation.navigation.AuthRoutes
 import com.elysium.softwork.payment.membership.presentation.navigation.NoPaymentGraphExit
 import com.elysium.softwork.payment.membership.presentation.navigation.PaymentOnboardingHost
 import com.elysium.softwork.shared.core.ServiceLocator
 import com.elysium.softwork.shared.presentation.navigation.MainNavHost
 import com.elysium.softwork.shared.presentation.theme.SoftWorkTheme
+import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
 
 /**
  * Single Activity hosting the entire Compose UI tree.
@@ -127,19 +130,44 @@ class MainActivity : AppCompatActivity() {
             .hasMembership
             .collectAsStateWithLifecycle()
 
+        // HTTP 401 unified trap: a mid-session token rejection (e.g. GET /membership-plans)
+        // raises this signal from the OkHttp interceptor with the recovery route for the dead
+        // session's auth method. React by dropping to the auth host and immediately consuming the
+        // signal so it does not re-fire on the next recomposition. The interceptor already wiped
+        // the persisted session, so re-auth starts from a clean slate. `googleReauth` is latched
+        // (survives config change) so the auth host starts on the Gmail handshake for a
+        // Google-linked session and on the credentials LoginScreen otherwise.
+        var googleReauth: Boolean by rememberSaveable { mutableStateOf(false) }
+        val sessionRecovery: SessionRecovery by locator.authStore
+            .sessionRecovery
+            .collectAsStateWithLifecycle()
+        LaunchedEffect(sessionRecovery) {
+            if (sessionRecovery != SessionRecovery.NONE) {
+                googleReauth = sessionRecovery == SessionRecovery.GOOGLE
+                isAuthenticated = false
+                locator.authStore.consumeSessionInvalidation()
+            }
+        }
+
         // Stable callback references — cached so child hosts do not re-bind their
         // handlers on every parent recomposition.
         val onAuthComplete: () -> Unit = remember { { isAuthenticated = true } }
         val onLogout: () -> Unit = remember {
             {
                 locator.authStore.clearSession()
+                // A deliberate logout always returns to the credentials screen, never the latched
+                // Google-reauth destination from a prior 401.
+                googleReauth = false
                 isAuthenticated = false
             }
         }
         val userName: String = stringResource(R.string.home_user_name_placeholder)
 
         when {
-            !isAuthenticated -> AuthNavHost(onAuthComplete = onAuthComplete)
+            !isAuthenticated -> AuthNavHost(
+                onAuthComplete = onAuthComplete,
+                startDestination = if (googleReauth) AuthRoutes.REGISTER_GOOGLE else AuthRoutes.LOGIN,
+            )
             !hasMembership -> PaymentOnboardingHost(onExitToMainShell = NoPaymentGraphExit)
             else -> MainNavHost(userName = userName, onLogout = onLogout)
         }

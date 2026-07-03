@@ -43,11 +43,20 @@ object ApiClient {
      * Live JWT supplier consulted by [AuthInterceptor] on **every** authenticated request.
      * Wired by `ServiceLocator` to read `SharedPrefsManager.KEY_AUTH_TOKEN` so the value is
      * never stale. Defaults to a no-session provider so a build that forgets to wire it sends
-     * no `Authorization` header rather than crashing. `@Volatile` so the install performed on
+     * no `Authorization` header rather than crashing. `@Volatile` so the installation performed on
      * the main thread during `Application.onCreate` is visible to OkHttp's dispatcher threads.
      */
     @Volatile
     private var tokenProvider: () -> String? = { null }
+
+    /**
+     * Handler invoked by [AuthInterceptor] when an authenticated request returns `401`.
+     * Wired by `ServiceLocator` to `AuthStore.invalidateSession()`. Defaults to a no-op so an
+     * un-wired build simply skips the graceful-degradation routing. `@Volatile` so the installation
+     * on the main thread during `Application.onCreate` is visible to OkHttp's dispatcher threads.
+     */
+    @Volatile
+    private var unauthorizedHandler: () -> Unit = {}
 
     /**
      * Registers the [provider] used to resolve the current session token for outgoing
@@ -57,9 +66,22 @@ object ApiClient {
         tokenProvider = provider
     }
 
+    /**
+     * Registers the [handler] invoked when an authenticated call comes back `401 Unauthorized`
+     * (the mid-session token-rejection trap). Call it once from `ServiceLocator`.
+     */
+    fun installUnauthorizedHandler(handler: () -> Unit) {
+        unauthorizedHandler = handler
+    }
+
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor { tokenProvider() })
+            .addInterceptor(
+                AuthInterceptor(
+                    tokenProvider = { tokenProvider() },
+                    onUnauthorized = { unauthorizedHandler() },
+                ),
+            )
             .addInterceptor(
                 ApiKeyInterceptor(
                     geminiApiKey = BuildConfig.API_KEY_GEMINI,

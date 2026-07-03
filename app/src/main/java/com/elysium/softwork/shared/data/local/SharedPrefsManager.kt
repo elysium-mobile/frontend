@@ -49,6 +49,7 @@ class SharedPrefsManager(context: Context) {
             remove(KEY_EMPLOYEE_PROFILE_ID)
             remove(KEY_USER_EMAIL)
             remove(KEY_USER_PASSWORD)
+            remove(KEY_GOOGLE_SESSION)
         }
     }
 
@@ -108,6 +109,15 @@ class SharedPrefsManager(context: Context) {
          * security team mandates encryption (see the class note above).
          */
         const val KEY_USER_PASSWORD: String = "user_password"
+
+        /**
+         * Storage key flagging whether the active session was established through the Google
+         * (Gmail) handshake rather than the credentials form. Persisted at login so the
+         * `HTTP 401` trap can pick the correct recovery route: a Google-linked session stores
+         * no local password and must re-authenticate through Google, not the `LoginScreen`.
+         * Part of the IAM session — cleared by [clearSession].
+         */
+        const val KEY_GOOGLE_SESSION: String = "google_session"
 
         /** Storage key for the global anonymity master switch. */
         const val KEY_GLOBAL_ANONYMITY: String = "global_anonymity"

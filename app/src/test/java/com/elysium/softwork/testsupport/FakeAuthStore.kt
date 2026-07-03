@@ -2,6 +2,10 @@ package com.elysium.softwork.testsupport
 
 import com.elysium.softwork.iam.data.store.AuthStore
 import com.elysium.softwork.iam.domain.model.User
+import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * In-memory test double for [AuthStore].
@@ -49,6 +53,16 @@ open class FakeAuthStore(
     var clearSessionInvocations: Int = 0
         private set
 
+    var invalidateSessionInvocations: Int = 0
+        private set
+
+    /** Recovery route [invalidateSession] will emit. Set to [SessionRecovery.GOOGLE] to exercise the Gmail path. */
+    var nextInvalidationRecovery: SessionRecovery = SessionRecovery.CREDENTIALS
+
+    private val _sessionRecovery: MutableStateFlow<SessionRecovery> =
+        MutableStateFlow(SessionRecovery.NONE)
+    override val sessionRecovery: StateFlow<SessionRecovery> = _sessionRecovery.asStateFlow()
+
     /** Arguments of the most recent [login] call, or `null` when [login] has never been invoked. */
     var lastLoginArgs: Pair<String, String>? = null
         private set
@@ -92,6 +106,16 @@ open class FakeAuthStore(
     override fun clearSession() {
         clearSessionInvocations += 1
         storedToken = null
+    }
+
+    override fun invalidateSession() {
+        invalidateSessionInvocations += 1
+        clearSession()
+        _sessionRecovery.value = nextInvalidationRecovery
+    }
+
+    override fun consumeSessionInvalidation() {
+        _sessionRecovery.value = SessionRecovery.NONE
     }
 
     /** Captured argument tuple for [register], grouped so assertions stay legible. */

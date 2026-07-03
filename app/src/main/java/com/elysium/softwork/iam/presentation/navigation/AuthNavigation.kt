@@ -43,15 +43,19 @@ import com.elysium.softwork.shared.utils.discriminators.SuccessKind
  *
  * @param onAuthComplete invoked when the user reaches the success screen and taps the
  *   primary button. The hosting graph routes to the main app shell from here.
+ * @param startDestination the initial route. Defaults to [AuthRoutes.LOGIN]; the host passes
+ *   [AuthRoutes.REGISTER_GOOGLE] when the `HTTP 401` trap invalidated a Google-linked session,
+ *   so the worker recovers through the Gmail handshake instead of the credentials form.
  */
 @Composable
 fun AuthNavHost(
     onAuthComplete: () -> Unit,
     navController: NavHostController = rememberNavController(),
+    startDestination: String = AuthRoutes.LOGIN,
 ) {
     NavHost(
         navController = navController,
-        startDestination = AuthRoutes.LOGIN,
+        startDestination = startDestination,
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars),

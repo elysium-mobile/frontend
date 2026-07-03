@@ -1,6 +1,8 @@
 package com.elysium.softwork.iam.data.store
 
 import com.elysium.softwork.iam.domain.model.User
+import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * IAM access port. Use cases and ViewModels depend on this contract; the concrete
@@ -14,6 +16,22 @@ import com.elysium.softwork.iam.domain.model.User
  * field-level validation payload.
  */
 interface AuthStore {
+
+    /**
+     * Process-wide signal describing how to recover after the current session was rejected
+     * mid-flight (an `HTTP 401` on an authenticated call — e.g. `GET /api/v1/membership-plans` —
+     * despite a freshly attached bearer token, caused by a `sub`-claim mismatch, unlinked
+     * account constraints, or missing role authorizations on the backend).
+     *
+     * Emits [SessionRecovery.CREDENTIALS] or [SessionRecovery.GOOGLE] when [invalidateSession]
+     * fires — the latter for a Google-linked session that carries no local password and must be
+     * renewed through the Gmail handshake. The top-level router
+     * ([com.elysium.softwork.MainActivity]) collects it, drops the worker back to the matching
+     * authentication surface, then resets it to [SessionRecovery.NONE] via
+     * [consumeSessionInvalidation]. [SessionRecovery.NONE] in every other state (fresh process,
+     * active session, already handled).
+     */
+    val sessionRecovery: StateFlow<SessionRecovery>
 
     /**
      * Signs in with corporate credentials. On success the JWT, the user-account id, and the
@@ -45,4 +63,21 @@ interface AuthStore {
 
     /** Clears the persisted session (token, account/profile ids, and stored credentials). */
     fun clearSession()
+
+    /**
+     * Graceful-degradation entry point for the `HTTP 401` trap. Reads the auth method of the
+     * dying session, wipes it via [clearSession], and raises [sessionRecovery] with the matching
+     * recovery route so the presentation layer re-authenticates cleanly instead of crashing or
+     * looping on a dead token. Safe to call from any thread (invoked by the OkHttp interceptor
+     * off the dispatcher thread); idempotent — repeated calls collapse to a single distinct
+     * emission.
+     */
+    fun invalidateSession()
+
+    /**
+     * Resets [sessionRecovery] back to [SessionRecovery.NONE] after the router has handled it,
+     * so a later session can arm the trap again. Called once by the router after it drops to the
+     * authentication surface.
+     */
+    fun consumeSessionInvalidation()
 }

@@ -53,6 +53,10 @@ class ServiceLocator(context: Context) {
      */
     init {
         ApiClient.installTokenProvider { sharedPrefsManager.getString(SharedPrefsManager.KEY_AUTH_TOKEN) }
+        // Route a mid-session 401 into the IAM session-invalidation trap. Resolved lazily inside
+        // the closure so it only touches `authStore` when a 401 actually fires — cold start stays
+        // free of the IAM store construction.
+        ApiClient.installUnauthorizedHandler { authStore.invalidateSession() }
     }
 
     /** Process-wide Gson used to deserialize structured error payloads (e.g. [BadRequestResponse]). */

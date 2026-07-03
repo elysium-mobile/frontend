@@ -10,27 +10,37 @@ package com.elysium.softwork.shared.data.network
  * {
  *   "status": 400,
  *   "error": "Bad Request",
- *   "message": "Internal validation failed",
- *   "field_errors": { "argument": "[CreateUserCommand] dni must be 8 characters long" }
+ *   "message": "JSON validation failed",
+ *   "fieldErrors": { "argument": "[CreateUserCommand] dni must be 8 characters long" }
  * }
  * ```
  *
  * Framework-agnostic by design: property names match the wire keys exactly so Gson resolves
- * them by reflection without `@SerializedName`. In particular [field_errors] keeps the
- * snake_case wire name as its Kotlin identifier so no annotation is needed.
+ * them by reflection without `@SerializedName`.
+ *
+ * **Wire asymmetry.** The live Spring Boot `GlobalExceptionHandler` serializes the validation
+ * map under the camelCase key **`fieldErrors`**. Older/alternate handler shapes have emitted
+ * the same map under snake_case `field_errors`. Rather than annotate (forbidden) or map, both
+ * spellings coexist as nullable fields and [primaryFieldError] consults whichever Gson filled.
  *
  * @property status numeric HTTP status echoed in the body (always `400` for this shape).
  * @property error short reason phrase (`"Bad Request"`).
  * @property message human-readable summary of the rejection.
- * @property field_errors map of offending field → validation message. Nullable because some
- *   400s (internal `IllegalArgumentException`) carry only [message] with no per-field detail.
+ * @property fieldErrors map of offending field → validation message, camelCase wire key used
+ *   by the live backend. Nullable because some 400s carry only [message] with no per-field detail.
+ * @property field_errors snake_case alias of the same map for handler variants that emit it
+ *   under the legacy key. Coexists with [fieldErrors] to absorb the asymmetry annotation-free.
  */
 data class BadRequestResponse(
     val status: Int = 400,
     val error: String? = null,
     val message: String? = null,
+    val fieldErrors: Map<String, String>? = null,
     val field_errors: Map<String, String>? = null,
 ) {
+
+    /** Whichever validation map the wire supplied (camelCase preferred, snake_case fallback). */
+    private val errors: Map<String, String>? get() = fieldErrors ?: field_errors
 
     /**
      * Best-effort single user-facing message extracted from this payload.
@@ -40,8 +50,8 @@ data class BadRequestResponse(
      * to the top-level [message]. Returns `null` only when the payload is entirely empty.
      */
     fun primaryFieldError(): String? =
-        field_errors?.get(ARGUMENT_KEY)
-            ?: field_errors?.values?.firstOrNull()
+        errors?.get(ARGUMENT_KEY)
+            ?: errors?.values?.firstOrNull()
             ?: message
 
     companion object {

@@ -1009,6 +1009,50 @@ server-side, so the device sends only the display name).
   `position`/`salary`. Those land via a fuller form later — until then the 400 handler
   surfaces the backend's field errors (e.g. the DNI length rule) inline.
 
+#### Phase 9 hardening (production host cut-over)
+
+- **Production HTTPS host.** `BACKEND_BASE_URL=https://api.elysium-mobile.online/`. TLS is
+  validated natively; the old `network_security_config.xml` cleartext exception (legacy EC2
+  IP/host) and its `android:networkSecurityConfig` manifest attribute were **deleted** — no
+  cleartext policy or security-config XML remains in the tree.
+- **400 field-errors wire key.** The live `GlobalExceptionHandler` serializes the validation
+  map under camelCase **`fieldErrors`** (see `ELYSIUM-API_DOCUMENTATION.md`). `BadRequestResponse`
+  now carries **both** `fieldErrors` and the legacy `field_errors` as coexisting nullable maps
+  (no `@SerializedName`); `primaryFieldError()` prefers the camelCase map then falls back. Prior
+  to this, the DNI/field errors silently never deserialized.
+- **HTTP 401 unified trap (graceful degradation, auth-method-aware).** A mid-session `401` on
+  any authenticated call (e.g. `GET /api/v1/membership-plans`) — a `sub`-claim mismatch,
+  unlinked account, or missing role authorization even with a fresh bearer — is caught at a
+  single choke-point and routes the worker cleanly back to the **matching** auth surface instead
+  of crashing/looping. Wiring:
+  - [`AuthInterceptor`](app/src/main/java/com/elysium/softwork/shared/data/network/AuthInterceptor.kt)
+    observes the response of every authenticated request; on `401` (skipping public auth paths,
+    and exempting the best-effort post-login `/employee-profile` sync via `TRAP_EXEMPT_SUFFIXES`
+    so the trap never fights the login handshake) it fires `onUnauthorized`.
+  - [`ApiClient`](app/src/main/java/com/elysium/softwork/shared/data/network/ApiClient.kt) gains
+    an `installUnauthorizedHandler` seam (mirrors `installTokenProvider`); `ServiceLocator` wires
+    it to `AuthStore.invalidateSession()`.
+  - [`AuthStore`](app/src/main/java/com/elysium/softwork/iam/data/store/AuthStore.kt) exposes a
+    reactive `sessionRecovery: StateFlow<SessionRecovery>` (discriminator in
+    [`shared/utils/discriminators/SessionRecovery.kt`](app/src/main/java/com/elysium/softwork/shared/utils/discriminators/SessionRecovery.kt):
+    `NONE`/`CREDENTIALS`/`GOOGLE`) plus `invalidateSession()` (reads the dying session's auth
+    method, wipes the session, emits the recovery route) and `consumeSessionInvalidation()`. A
+    fresh successful login re-arms the flag (resets to `NONE`).
+  - **Auth-method persistence.** `SharedPrefsManager.KEY_GOOGLE_SESSION` (Boolean, part of the
+    IAM session, cleared by `clearSession()`) is written at login — `true` from
+    `registerWithGoogle`, `false` from credentials `login`/`register`. `invalidateSession()`
+    reads it *before* the wipe to pick `GOOGLE` vs `CREDENTIALS` (a Google-linked account stores
+    no local password, so it can only recover through the Gmail handshake).
+  - [`MainActivity`](app/src/main/java/com/elysium/softwork/MainActivity.kt) collects the signal
+    with `collectAsStateWithLifecycle` and, in a `LaunchedEffect`, latches a `rememberSaveable`
+    `googleReauth` bit, flips `isAuthenticated = false`, then consumes the signal — the router
+    hot-swaps to `AuthNavHost` (no `popUpTo`) with `startDestination = REGISTER_GOOGLE` for a
+    Google session, else `LOGIN`. A deliberate logout resets `googleReauth`.
+  - [`AuthNavHost`](app/src/main/java/com/elysium/softwork/iam/presentation/navigation/AuthNavigation.kt)
+    gained a `startDestination` parameter (defaults to `AuthRoutes.LOGIN`).
+  - `FakeAuthStore` (with a programmable `nextInvalidationRecovery`) + the `AuthStore` contract
+    updated in lockstep.
+
 ### ✅ Phase 10 — Feedback backend integration against the live Spring Boot API
 
 The `feedback` survey stack now talks to the real FlowWork backend. All survey mocks are
