@@ -14,8 +14,8 @@ import java.time.LocalDate
  * - trims the free-text fields;
  * - defaults the submission date to today (ISO `yyyy-MM-dd`) when the caller omits it.
  *
- * The camelCase request keys (`surveyId`, `employeeProfileId`, `submittedAt`) are populated
- * per the backend contract. Stateless; safe to share a single instance process-wide.
+ * The snake_case request keys (`survey_id`, `employee_profile_id`, `submitted_at`) are
+ * populated per the backend contract. Stateless; safe to share a single instance process-wide.
  *
  * @param store survey data port that performs the network call.
  * @param prefs session storage holding the cached `employee_profile_id`.
@@ -43,9 +43,9 @@ class SubmitSurveyResponseUseCase(
     ): Result<SurveyResponse> {
         val profileId: Long = prefs.getLong(SharedPrefsManager.KEY_EMPLOYEE_PROFILE_ID)
         val response = SurveyResponse(
-            surveyId = surveyId,
-            employeeProfileId = profileId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
-            submittedAt = submittedAt.ifBlank { LocalDate.now().toString() },
+            survey_id = surveyId,
+            employee_profile_id = profileId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
+            submitted_at = submittedAt.ifBlank { LocalDate.now().toString() },
             commentary = commentary.trim(),
             cause = cause.trim(),
         )

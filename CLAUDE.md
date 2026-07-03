@@ -960,11 +960,19 @@ server-side, so the device sends only the display name).
   `KEY_USER_PASSWORD`. The plaintext password is **required** for re-authentication (see
   below). `KEY_USER_ID` was removed (superseded by `KEY_USER_ACCOUNT_ID`).
 - **Domain (`iam/domain/model/User`)**: one annotation-free bean spans `sign-in`,
-  `sign-up/employee`, and `employee-profile`. Asymmetric wire keys coexist as nullable
-  fields: `email` (request) vs `gmail` (response); `start_date` (request) vs `dateStart`
-  (response); plus `id`/`user_account_id`/`employee_profile_id`, the employee sign-up
-  payload, and a forward-looking `membershipStatus`. `id` is now `Long?`. `isMembershipActive()`
-  treats only `"ACTIVE"` as active (null ⇒ not active).
+  `sign-up/employee`, and `employee-profile`. **Uniform snake_case** (the backend serializes
+  every DTO with `@JsonNaming(SnakeCaseStrategy)`), so every property is snake_case and Gson
+  resolves by reflection — no `@SerializedName`. The one asymmetry is a backend field **typo**:
+  the profile request sends `date_start` but the response returns `star_start` (Java field
+  `starStart`), so both snake_case keys coexist as nullable fields. The sign-in/sign-up
+  response (`AuthenticatedUserAccountResponse`) returns only `id`/`email`/`token` — the address
+  echoes under the same `email` key, so the former phantom `gmail` field was **removed**. Other
+  fields: `password`, `token`, `membership_status`, the employee sign-up payload (`name`,
+  `last_name`, `phone_number`, `dni`, `anonymous_name`, `position`, `salary`), and the profile
+  response ids (`employee_profile_id`, `user_account_id`, `work_of_team_id`). `id` is `Long?`.
+  `isMembershipActive()` reads `membership_status` and treats only `"ACTIVE"` as active (null ⇒
+  not active). **(Superseded the earlier camelCase keys `gmail`/`dateStart`/`membershipStatus`/
+  `lastName`/… after the backend's 2026-07-03 snake_case migration — see Phase 14.)**
 - **Network service (`iam/data/network/AuthWebService`)**: exact live routes —
   `POST api/v1/authentication/sign-in`, `POST api/v1/authentication/sign-up/employee`,
   `GET api/v1/employee-profile` (returns `List<User>`). Relative paths only.
@@ -1015,11 +1023,13 @@ server-side, so the device sends only the display name).
   validated natively; the old `network_security_config.xml` cleartext exception (legacy EC2
   IP/host) and its `android:networkSecurityConfig` manifest attribute were **deleted** — no
   cleartext policy or security-config XML remains in the tree.
-- **400 field-errors wire key.** The live `GlobalExceptionHandler` serializes the validation
-  map under camelCase **`fieldErrors`** (see `ELYSIUM-API_DOCUMENTATION.md`). `BadRequestResponse`
-  now carries **both** `fieldErrors` and the legacy `field_errors` as coexisting nullable maps
-  (no `@SerializedName`); `primaryFieldError()` prefers the camelCase map then falls back. Prior
-  to this, the DNI/field errors silently never deserialized.
+- **400 field-errors wire key.** Per the 2026-07-03 backend migration, the
+  `GlobalExceptionHandler` records are `@JsonNaming(SnakeCaseStrategy)`, so the envelope key is
+  **`field_errors`** and the dynamic keys inside mirror the snake_case DTO field names (see
+  `ELYSIUM-API_DOCUMENTATION.md`). `BadRequestResponse` carries the single snake_case
+  `field_errors` map (no `@SerializedName`); `primaryFieldError()` reads it (`argument` key →
+  first value → top-level `message`). (An interim build briefly carried both a camelCase
+  `fieldErrors` and `field_errors`; the camelCase half was removed in Phase 14.)
 - **HTTP 401 unified trap (graceful degradation, auth-method-aware).** A mid-session `401` on
   any authenticated call (e.g. `GET /api/v1/membership-plans`) — a `sub`-claim mismatch,
   unlinked account, or missing role authorization even with a fresh bearer — is caught at a
@@ -1052,24 +1062,51 @@ server-side, so the device sends only the display name).
     gained a `startDestination` parameter (defaults to `AuthRoutes.LOGIN`).
   - `FakeAuthStore` (with a programmable `nextInvalidationRecovery`) + the `AuthStore` contract
     updated in lockstep.
+- **Membership validation via the `user_accounts` FK — catalog vs. enrolment contract split.**
+  The session-authorization gate is anchored on the `membership_id` foreign key exposed on the
+  worker's `user_accounts` record, **not** on the plan catalogue:
+  - **Post-login / cold-start sync.** `AuthStoreImpl.persistSessionAndSyncProfile` now runs
+    `syncUserAccount(accountId)` alongside `syncEmployeeProfile`: it fetches
+    `GET /api/v1/user_accounts` (new `AuthWebService.getUserAccounts()`), matches the worker's row
+    by `user_account_id`, and caches `membership_id` in `SharedPrefsManager.KEY_MEMBERSHIP_ID`
+    (Long; part of the IAM session, cleared by `clearSession()`). `User` gained the
+    `user_accounts` payload keys (`user_id`, `membership_id`, `company_id`).
+  - **Session-authorization check.** `ValidateMembershipUseCase(store, membershipIdProvider)`
+    reads the cached `membership_id`, queries `GET /api/v1/memberships/{id}`
+    (`MembershipStore.getMembership(id)`), and evaluates `Membership.isActiveNow()` — status
+    `ACTIVE` **and** today within `[membership_start, membership_over]`. It syncs the reactive
+    gate (`activateMembership` when valid, `cancelSubscription` otherwise). A missing id / `401` /
+    `404` / fetch failure ⇒ not active ⇒ gate closed. `MainActivity` invokes it in a
+    `LaunchedEffect(isAuthenticated)` on cold-start and after login, so a non-active subscription
+    reactively routes the worker to payment onboarding (`ServiceLocator.validateMembershipUseCase`).
+  - **Catalogue stays browse-only.** `/api/v1/membership-plans` (`getPlans` → `loadPlans`) never
+    flips the gate — a failure lands on `errorMessage` only, so an expired worker always sees the
+    upgrade tiers. `MembershipViewModel.validateMembershipAccess()` reuses the same
+    `ValidateMembershipUseCase` to drive the `MembershipRequiredBanner` (strings
+    `payment_membership_required` / `_detail`); an `/orders` order-push business-rule failure also
+    raises it via the VM's private `isMembershipGate()`.
+  - **Trap exemption unchanged:** `AuthInterceptor.RETRY_GATE_SUFFIXES` (`/membership-plans`,
+    `/memberships`, `/orders`) keeps all three out of the `401` session-invalidation logout trap;
+    `MembershipStoreImpl.throwTyped` still maps `401` → `UnauthorizedException`.
+  - Replaced the interim list-based `getMemberships()` / `GetMembershipsUseCase` with the FK
+    `getMembership(id)` / `ValidateMembershipUseCase`. `FakeMembershipStore` exposes
+    `nextMembershipResult`.
 
 ### ✅ Phase 10 — Feedback backend integration against the live Spring Boot API
 
 The `feedback` survey stack now talks to the real FlowWork backend. All survey mocks are
 deleted; the AI-chat sub-context (`FeedbackStore`/`AiChatViewModel`) is untouched.
 
-- **Domain (`feedback/domain/model/`)** — three annotation-free beans matching the backend's
-  mixed snake/camelCase contract, with asymmetric request/response keys coexisting as nullable
-  fields (no `@SerializedName`):
+- **Domain (`feedback/domain/model/`)** — three annotation-free beans in **uniform snake_case**
+  (no `@SerializedName`). The old request/response asymmetries were resolved backend-side (the
+  `expirationType` copy-paste bug is fixed to `expiration_time`), so each concept is now a
+  **single** field — the camelCase halves were removed in Phase 14:
   - [`Survey`](app/src/main/java/com/elysium/softwork/feedback/domain/model/Survey.kt):
-    `survey_id`, `title`, `description`, `targetType`/`target_type`,
-    `expirationType`/`expiration_time`. (Replaces the old non-null `id`/`title`/`description`.)
+    `survey_id`, `title`, `description`, `target_type`, `expiration_time`.
   - [`QuestionSurvey`](app/src/main/java/com/elysium/softwork/feedback/domain/model/QuestionSurvey.kt):
-    `question_survey_id`, `textQuestion`/`text_question`, `questionType`/`question_type`,
-    `surveyId`/`survey_id`.
+    `question_survey_id`, `text_question`, `question_type`, `survey_id`.
   - [`SurveyResponse`](app/src/main/java/com/elysium/softwork/feedback/domain/model/SurveyResponse.kt):
-    `survey_response_id`, `surveyId`/`survey_id`, `employeeProfileId`/`employee_profile_id`,
-    `submittedAt`/`submitted_at`, `commentary`, `cause`.
+    `survey_response_id`, `survey_id`, `employee_profile_id`, `submitted_at`, `commentary`, `cause`.
 - **Network (`feedback/data/network/SurveyWebService`)** — relative paths only:
   `GET api/v1/surveys`, `GET api/v1/surveys/{id}`, `GET api/v1/question-surveys`,
   `GET api/v1/question-surveys/{id}`, `POST api/v1/question-surveys`,
@@ -1113,7 +1150,8 @@ are deleted. The backend splits a notification across two resources, so the feed
     `notification_id`, `seen`, `notification_type`, `user_account_id`. (Replaces the old
     `id`/`type`/`title`/`description`/`isRead`.)
   - [`NotificationDetail`](app/src/main/java/com/elysium/softwork/notifications/domain/model/NotificationDetail.kt):
-    `notification_detail_id`, `title`, `content`, `notificationId`/`notification_id`.
+    `notification_detail_id`, `title`, `content`, `notification_id`. (Phase 14 removed the
+    camelCase `notificationId` half — request and response both use `notification_id`.)
   - [`NotificationFeedItem`](app/src/main/java/com/elysium/softwork/notifications/domain/model/NotificationFeedItem.kt):
     render aggregate (`id`, resolved `NotificationType`, `title`, `content`, `seen`) — never
     travels the wire, assembled by the use case.
@@ -1157,23 +1195,46 @@ The `worker.forum` context transitioned off the flat `Post` model onto the backe
 hierarchical `Forum → Category → Thread → Message` structure (+ `Asset`, `Report`). All forum
 mocks (`SeedPosts`, `SampleReports`, the report `delay`) are deleted.
 
-- **Domain (`worker/forum/domain/model/`)** — six annotation-free beans, request/response key
-  asymmetries handled by coexisting nullable fields (no `@SerializedName`):
-  - [`Forum`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Forum.kt),
-    [`Category`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Category.kt),
-    [`Asset`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Asset.kt),
-    [`Report`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Report.kt) —
+- **Domain (`worker/forum/domain/model/`)** — six annotation-free beans in **uniform
+  snake_case** (Phase 14 collapsed every request/response pair to a single field — the backend
+  serializes both directions identically; no `@SerializedName`):
+  - [`Forum`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Forum.kt)
+    (`forum_id`, `title`, `description`, `company_id`),
+    [`Category`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Category.kt)
+    (`category_id`, `title`, `description`, `forum_id`),
+    [`Report`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Report.kt)
+    (`report_id`, `reason`, `description`, `user_account_id`, `report_date`, `area_company_id`) —
     pure wire beans.
-  - [`Thread`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Thread.kt) and
+  - [`Asset`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Asset.kt) models
+    the **JSON `AssetResponse`** in snake_case (`asset_id`, `message_id`, `name`, `url`,
+    `file_size`, `file_type`, …). Its *creation* request is **not** JSON — see the multipart
+    exception below.
+  - [`Thread`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Thread.kt)
+    (`thread_id`, `title`, `area_company_id`, `last_message`, `category_id`, `message_count`) and
     [`Message`](app/src/main/java/com/elysium/softwork/worker/forum/domain/model/Message.kt)
+    (`message_id`, `user_account_id`, `content_message`, `thread_id`, `@Ignore`-d `attachments`)
     double as Room `@Entity`s (`threads` / `messages`) per the documented offline-first cache
-    exception (mirrors the former `Post`). To satisfy Room's non-null-PK rule without a mapper,
-    the primary keys (`thread_id` / `message_id`) are **non-null `Long = 0L`**; Gson overwrites
-    the default with the real id on parse. All other columns stay nullable to match the wire.
+    exception (mirrors the former `Post`).
+    - **`Message.message_id` is a fully nullable `@PrimaryKey(autoGenerate = true) Long? = null`.**
+      The former non-null `= 0L` fallback was serialized as `"message_id": 0` on
+      `POST /api/v1/messages`, which the backend rejects (`"Message ID must be a positive
+      number."`). A `null` field is dropped by Gson, so the create request omits the key;
+      `autoGenerate` is what lets Room accept the *nullable* PK (a plain nullable `@PrimaryKey`
+      is rejected), and it stays dormant because every cache write carries the real server id.
+    - **`Thread.thread_id` still uses the non-null `Long = 0L` fallback** — its create request
+      (`POST /api/v1/threads`) has the identical latent `thread_id: 0` risk; apply the same
+      nullable-autogenerate fix if/when the backend enforces a positive `thread_id`.
+    - All other columns are nullable to match the wire; Gson overwrites the ids on parse.
   - The former `Post` and `ForumReport` models are deleted.
+- **Multipart exception (`POST /api/v1/assets`).** Asset creation is `multipart/form-data`
+  (the backend streams the binary to Cloudinary), so its form-field names bypass Jackson's
+  snake_case JSON strategy and stay camelCase — `ForumWebService.createAsset` is now a
+  `@Multipart` call with `@Part("messageId")`, `@Part("name")`, `@Part("fileType")`, and a
+  `@Part file: MultipartBody.Part` (was previously a mis-declared `@Body Asset` JSON POST). The
+  JSON `Asset` response is still snake_case.
 - **Room (`worker/forum/data/local/`)**: `PostDao` → `ThreadDao` + `MessageDao`;
-  `ForumDatabase` bumped to **v2** (`entities = [Thread, Message]`, destructive migration —
-  the cache regenerates from the backend).
+  `ForumDatabase` bumped to **v3** (v2 → v3 drops the now-redundant camelCase columns from
+  `threads` / `messages`; destructive migration — the cache regenerates from the backend).
 - **Network (`worker/forum/data/network/ForumWebService`)** — replaces `PostWebService` +
   `ForumReportWebService`. Relative paths only: `GET api/v1/forums`, `GET api/v1/categories`,
   `GET/POST api/v1/threads`, `GET api/v1/threads/{id}`, `GET/POST api/v1/messages`,
@@ -1222,15 +1283,20 @@ and the **client-side saved cards** (`PaymentMethod`) are retained — the backe
 neither a gate nor a stored instrument (it models payment as a transaction).
 
 - **Domain (`payment/membership/domain/model/`)** — five annotation-free beans (no
-  `@SerializedName`), request/response key asymmetries via coexisting nullable fields:
-  - [`Membership`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Membership.kt),
-    [`Order`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Order.kt),
-    [`Payment`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Payment.kt),
-    [`Benefit`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Benefit.kt) — new.
-  - [`MembershipPlan`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/MembershipPlan.kt)
-    refactored to `plan_id`, `planName`/`plan_name`, integer `price` (replaces `monthlyPrice`),
-    `membershipId`/`membership_id`, `benefit_response_list`. (`key`/`name`/`features`/
-    `isRecommended` removed.) `PaymentMethod` kept as the client-side card.
+  `@SerializedName`), **uniform snake_case** (Phase 14 collapsed every request/response pair to
+  a single field — the backend serializes both directions identically):
+  - [`Membership`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Membership.kt):
+    `membership_id`, `membership_start`, `membership_over`, `membership_status`.
+  - [`Order`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Order.kt):
+    `order_id`, `user_account_id`, `amount`, `membership_id`.
+  - [`Payment`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Payment.kt):
+    `payment_id`, `order_id`, `transaction_id`, `payment_date`.
+  - [`Benefit`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/Benefit.kt):
+    `benefit_id`, `title`, `description`, `membership_plan_id`.
+  - [`MembershipPlan`](app/src/main/java/com/elysium/softwork/payment/membership/domain/model/MembershipPlan.kt):
+    `plan_id`, `plan_name`, integer `price`, `membership_id`, `benefit_response_list`.
+  - `PaymentMethod` is the **client-side** saved card (no backend resource), so its camelCase
+    `holderName`/`expiryMonthYear` are local field names, not wire keys — left as-is.
 - **Network (`payment/membership/data/network/MembershipWebService`)** — relative paths:
   `POST/GET api/v1/memberships`, `GET api/v1/memberships/{id}`, `POST/GET api/v1/orders`,
   `GET api/v1/orders/userAccount/{userAccountId}`, `POST api/v1/payments`,
@@ -1269,6 +1335,82 @@ neither a gate nor a stored instrument (it models payment as a transaction).
   `Payment` transaction. A generated `transactionId` stands in for a real processor token.
 - **One new string** `payment_price_format` (`S/. %1$d`) formats the integer price in both
   locales.
+
+### 🚧 Phase 14 — Uniform snake_case wire migration
+
+The backend completed a **uniform snake_case** migration (documented in
+`ELYSIUM-API_DOCUMENTATION.md`, dated 2026-07-03): every DTO now serializes with
+`@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy)`, and the dynamic keys inside the
+400 `field_errors` map are snake_cased too. This supersedes the earlier "asymmetric camelCase
+vs snake_case coexistence" understanding across the Phase 9–13 beans. The migration policy:
+
+- **Every domain property is snake_case** to match the wire by reflection (still no
+  `@SerializedName`, still one bean per context). Where request/response use *different*
+  snake_case keys for one concept, both coexist as nullable fields (that is still snake_case).
+- **Multipart exception:** `POST /api/v1/assets` form-field names bypass Jackson JSON naming and
+  stay camelCase (`messageId`, `name`, `fileType`, `file`).
+
+**✅ IAM (done first):**
+- `User.kt` fully snake_cased. Removed the phantom `gmail` field (the sign-in/sign-up response
+  echoes the address under `email`, not `gmail`). Renamed `membershipStatus → membership_status`,
+  `lastName → last_name`, `phoneNumber → phone_number`, `anonymousName → anonymous_name`. Fixed
+  the profile date keys to the real wire: request `date_start` (was `start_date`) and response
+  `star_start` (was `dateStart`, the backend typo). `isMembershipActive()` now reads
+  `membership_status`.
+- `AuthStoreImpl.registerWithGoogle` reads `user.email` (the `gmail` fallback is gone);
+  `AuthWebService` KDoc realigned. `FakeAuthStore` + `AuthViewModelTest` updated in lockstep.
+
+**✅ Feedback (done):**
+- `Survey` / `QuestionSurvey` / `SurveyResponse` collapsed to single snake_case fields
+  (removed `targetType`, `expirationType`, `textQuestion`, `questionType`, `surveyId`,
+  `employeeProfileId`, `submittedAt` — the backend resolved every request/response mismatch).
+- `SubmitSurveyResponseUseCase` binds `survey_id`/`employee_profile_id`/`submitted_at`;
+  `SurveyStoreImpl` question filter reads `survey_id` only. `ChatMessage` (AI-chat mock, not a
+  wire bean and outside the surveys endpoints) intentionally left as-is.
+
+**✅ Notifications (done):**
+- `NotificationDetail` collapsed to a single `notification_id` (removed the camelCase
+  `notificationId`; request + response share the key). `Notification` was already fully
+  snake_case; `NotificationFeedItem` is a render aggregate (not a wire bean), untouched. Join in
+  `GetNotificationsUseCase` and the `NotificationsViewModelTest` fixtures already used
+  `notification_id` — no call-site or test changes required.
+
+**✅ Payment / Membership (done):**
+- `Membership`, `Order`, `Payment`, `Benefit`, `MembershipPlan` collapsed to single snake_case
+  fields (removed `membershipStart/Over/Status`, `userAccountId`, `membershipId`, `orderId`,
+  `transactionId`, `paymentDate`, `planName`, `membershipPlanId`). `PayMembershipUseCase` binds
+  `user_account_id`/`membership_id`/`order_id`/`transaction_id`/`payment_date`; the two plan
+  screens read `plan_name` directly. `MembershipWebService` route literals
+  (`orders/userAccount/{userAccountId}`, `{id}/benefits` `@Path` names) are URLs, not JSON keys —
+  untouched. `PaymentMethod` is client-side only — left as-is. Tests already used snake_case.
+
+**✅ Worker Forum (done):**
+- `Forum`, `Category`, `Asset`, `Report`, `Thread`, `Message` collapsed to single snake_case
+  fields (removed `companyId`, `forumId`, `areaCompanyId`, `lastMessage`, `categoryId`,
+  `messageCount`, `userAccountId`, `contentMessage`, `threadId`, `reportDate`, `messageId`,
+  `fileSize`, `fileType`). `ForumStoreImpl` message filter reads `thread_id` only; the three
+  write use cases (`PostMessage`, `CreateThread`, `SubmitForumReport`) bind snake_case keys.
+- **Room v2 → v3** (`ForumDatabase`) drops the redundant camelCase columns via destructive
+  migration; DAOs already queried only `thread_id` / `message_id`, so no query changed.
+- **Multipart fix:** `ForumWebService.createAsset` converted from a mis-declared `@Body Asset`
+  JSON POST to a proper `@Multipart` upload with camelCase `@Part` form fields (`messageId`,
+  `name`, `fileType`, `file`) — the documented multipart exception. Tests already used snake_case.
+- **Interceptor header guard:** `AuthInterceptor` now injects `Content-Type: application/json`
+  on every authenticated JSON write, but **skips it for `multipart/*` bodies** (detected via
+  `request.body?.contentType()?.type`), so the `/assets` upload keeps OkHttp's body-derived
+  `multipart/form-data; boundary=…`. Previously Content-Type was set unconditionally, which
+  would have corrupted the multipart upload. `Accept` + `Authorization` are unchanged.
+
+**✅ Shared error response (done):** `BadRequestResponse` trimmed to the single snake_case
+`field_errors` map (the interim camelCase `fieldErrors` half removed); `primaryFieldError()`
+reads it directly. `AuthToken.expiresAt` → `expires_at` (an unused speculative bean, aligned for
+consistency — candidate for deletion since no stand-alone token endpoint exists).
+
+**Migration complete.** All wire beans across IAM, Feedback, Notifications, Payment, Worker Forum
+**and** the shared `BadRequestResponse` error envelope are uniform snake_case. Documented
+non-wire exclusions (unchanged): `ChatMessage.isFromUser` (AI-chat mock, in-memory), `PaymentMethod`
+`holderName`/`expiryMonthYear` (client-side saved card, no backend resource), and the `/assets`
+multipart `@Part` form-field names `messageId`/`name`/`fileType`/`file` (bypass Jackson JSON naming).
 
 ### 🔜 Next — Phase (IMPLEMENTATION WITH REAL BACKEND API)
 

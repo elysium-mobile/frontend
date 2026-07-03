@@ -6,10 +6,14 @@ import com.elysium.softwork.worker.forum.domain.model.Forum
 import com.elysium.softwork.worker.forum.domain.model.Message
 import com.elysium.softwork.worker.forum.domain.model.Report
 import com.elysium.softwork.worker.forum.domain.model.Thread
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 
 /**
@@ -61,9 +65,21 @@ interface ForumWebService {
     // endregion
 
     // region Assets & Reports
-    /** Uploads an attachment reference for a message. */
+    /**
+     * Uploads an attachment for a message. **Multipart exception:** unlike every other endpoint,
+     * asset creation is `multipart/form-data` (the backend streams the binary to Cloudinary),
+     * so the form-field names bypass Jackson's snake_case JSON strategy and stay camelCase
+     * exactly as the controller declares them — `messageId`, `name`, `fileType`, `file`. The
+     * server computes `url` and `file_size`; the JSON [Asset] response comes back snake_case.
+     */
+    @Multipart
     @POST("api/v1/assets")
-    suspend fun createAsset(@Body asset: Asset): Response<Asset>
+    suspend fun createAsset(
+        @Part("messageId") messageId: RequestBody,
+        @Part("name") name: RequestBody,
+        @Part("fileType") fileType: RequestBody,
+        @Part file: MultipartBody.Part,
+    ): Response<Asset>
 
     /** Submits a content/conduct report. */
     @POST("api/v1/reports")

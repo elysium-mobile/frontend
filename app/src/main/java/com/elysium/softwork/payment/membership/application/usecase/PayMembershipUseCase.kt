@@ -49,17 +49,17 @@ class PayMembershipUseCase(
     suspend operator fun invoke(plan: MembershipPlan): Result<Unit> = runCatching {
         val order = store.createOrder(
             Order(
-                userAccountId = accountIdProvider(),
+                user_account_id = accountIdProvider(),
                 amount = plan.price,
-                membershipId = plan.membership_id ?: plan.membershipId,
+                membership_id = plan.membership_id,
             ),
         ).getOrThrow()
 
         store.createPayment(
             Payment(
-                orderId = order.order_id,
-                transactionId = "TXN-${UUID.randomUUID()}",
-                paymentDate = LocalDate.now().toString(),
+                order_id = order.order_id,
+                transaction_id = "TXN-${UUID.randomUUID()}",
+                payment_date = LocalDate.now().toString(),
             ),
         ).getOrThrow()
 

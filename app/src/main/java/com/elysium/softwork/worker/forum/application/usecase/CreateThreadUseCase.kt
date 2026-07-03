@@ -8,11 +8,11 @@ import java.time.LocalDate
  * Creates a new discussion thread.
  *
  * Owns the request-assembly rules: the title is trimmed, the message count seeds at `0`, and
- * `lastMessage` defaults to today (ISO `yyyy-MM-dd`). The camelCase request keys are bound
+ * `last_message` defaults to today (ISO `yyyy-MM-dd`). The snake_case request keys are bound
  * per the backend contract.
  *
  * Note: the backend `thread` create contract carries no worker identifier (it keys off
- * `areaCompanyId` / `categoryId`), so — unlike [PostMessageUseCase] and
+ * `area_company_id` / `category_id`), so — unlike [PostMessageUseCase] and
  * [SubmitForumReportUseCase] — there is no `user_account_id` / `employee_profile_id` to bind
  * here. The owning area/category are forwarded when the caller can supply them.
  *
@@ -38,10 +38,10 @@ class CreateThreadUseCase(private val store: ForumStore) {
     ): Result<Thread> = store.createThread(
         Thread(
             title = title.trim(),
-            categoryId = categoryId,
-            areaCompanyId = areaCompanyId,
-            lastMessage = LocalDate.now().toString(),
-            messageCount = 0,
+            category_id = categoryId,
+            area_company_id = areaCompanyId,
+            last_message = LocalDate.now().toString(),
+            message_count = 0,
         ),
     )
 }

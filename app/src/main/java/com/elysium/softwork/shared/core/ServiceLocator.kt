@@ -22,6 +22,7 @@ import com.elysium.softwork.notifications.data.network.NotificationWebService
 import com.elysium.softwork.notifications.data.store.NotificationStore
 import com.elysium.softwork.notifications.data.store.NotificationStoreImpl
 import com.elysium.softwork.payment.membership.data.network.MembershipWebService
+import com.elysium.softwork.payment.membership.application.usecase.ValidateMembershipUseCase
 import com.elysium.softwork.payment.membership.data.store.MembershipStore
 import com.elysium.softwork.payment.membership.data.store.MembershipStoreImpl
 
@@ -109,5 +110,20 @@ class ServiceLocator(context: Context) {
 
     val membershipStore: MembershipStore by lazy {
         MembershipStoreImpl(sharedPrefsManager, membershipWebService, gson)
+    }
+
+    /**
+     * Session-authorization membership check. Reads the cached `membership_id` (resolved during
+     * the post-login `user_accounts` sync) and validates the live subscription against
+     * `GET /api/v1/memberships/{id}`, syncing the reactive gate. Invoked by `MainActivity` on
+     * cold-start and after a successful login to decide between the main shell and payment
+     * onboarding. Exposed as the use case itself (not a `StateFlow`) because it is an action.
+     */
+    val validateMembershipUseCase: ValidateMembershipUseCase by lazy {
+        ValidateMembershipUseCase(membershipStore) {
+            sharedPrefsManager
+                .getLong(SharedPrefsManager.KEY_MEMBERSHIP_ID)
+                .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+        }
     }
 }

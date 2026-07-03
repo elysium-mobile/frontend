@@ -74,13 +74,14 @@ class AuthStoreImpl(
 
     override suspend fun registerWithGoogle(name: String): Result<User> = runCatching {
         // Same `sign-up/employee` endpoint; the Google identity provides the email
-        // server-side, so the device sends only the display name. No local password exists
-        // for a Google-linked account, so the persisted credential is left blank — a later
-        // session renewal goes through Google, not [reauthenticate].
+        // server-side, so the device sends only the display name. The response echoes the
+        // resolved address under `email`. No local password exists for a Google-linked account,
+        // so the persisted credential is left blank — a later session renewal goes through
+        // Google, not [reauthenticate].
         val user = unwrap(webService.signUpEmployee(User(name = name)))
         persistSessionAndSyncProfile(
             user,
-            email = user.gmail ?: user.email.orEmpty(),
+            email = user.email.orEmpty(),
             password = "",
             googleLinked = true,
         )
@@ -175,7 +176,10 @@ class AuthStoreImpl(
         // below is intentionally trap-exempt (see AuthInterceptor), so it cannot re-raise this.
         _sessionRecovery.value = SessionRecovery.NONE
 
-        user.id?.let { accountId -> syncEmployeeProfile(accountId) }
+        user.id?.let { accountId ->
+            syncEmployeeProfile(accountId)
+            syncUserAccount(accountId)
+        }
     }
 
     /**
@@ -195,6 +199,27 @@ class AuthStoreImpl(
                 ?.employee_profile_id
                 ?: return
             prefs.putLong(SharedPrefsManager.KEY_EMPLOYEE_PROFILE_ID, profileId)
+        }
+    }
+
+    /**
+     * Resolves and persists the worker's `membership_id` foreign key.
+     *
+     * `GET /api/v1/user_accounts` returns every account, so the worker's row is found by
+     * matching [User.user_account_id] against [accountId]; its [User.membership_id] is then
+     * cached so the session-authorization gate can query `GET /api/v1/memberships/{id}`.
+     * Best-effort: any failure is swallowed — a missing membership id simply leaves the gate
+     * to treat the worker as not-active (routing them to payment onboarding).
+     */
+    private suspend fun syncUserAccount(accountId: Long) {
+        runCatching {
+            val response = webService.getUserAccounts()
+            if (!response.isSuccessful) return
+            val membershipId = response.body()
+                ?.firstOrNull { it.user_account_id == accountId }
+                ?.membership_id
+                ?: return
+            prefs.putLong(SharedPrefsManager.KEY_MEMBERSHIP_ID, membershipId)
         }
     }
 

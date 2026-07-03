@@ -12,10 +12,12 @@ import com.elysium.softwork.payment.membership.application.usecase.GetMembership
 import com.elysium.softwork.payment.membership.application.usecase.ObserveCurrentPlanUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObservePaymentMethodsUseCase
 import com.elysium.softwork.payment.membership.application.usecase.PayMembershipUseCase
+import com.elysium.softwork.payment.membership.application.usecase.ValidateMembershipUseCase
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.PaymentMethod
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
+import com.elysium.softwork.shared.data.network.UnauthorizedException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,7 +31,9 @@ import kotlinx.coroutines.launch
  * saved-cards stream, the card composer buffer, the payment state machine, and the surfaced
  * [errorMessage] (a backend `400`/business-rule failure parsed via [BadRequestException]).
  *
- * @param getPlans fetches the plan catalogue from the backend.
+ * @param getPlans fetches the public plan catalogue (browse-only, never gates).
+ * @param validateMembership validates the worker's subscription via the `membership_id` FK and
+ *   syncs the gate (drives the "membership required" prompt).
  * @param observePaymentMethods streams the saved-cards list.
  * @param observeCurrentPlan streams the active plan key.
  * @param addPaymentMethod assembles and persists a card from raw composer input.
@@ -39,6 +43,7 @@ import kotlinx.coroutines.launch
  */
 class MembershipViewModel(
     private val getPlans: GetMembershipPlansUseCase,
+    private val validateMembership: ValidateMembershipUseCase,
     observePaymentMethods: ObservePaymentMethodsUseCase,
     observeCurrentPlan: ObserveCurrentPlanUseCase,
     private val addPaymentMethod: AddPaymentMethodUseCase,
@@ -92,17 +97,47 @@ class MembershipViewModel(
     /** Latest backend validation / business-rule error, or `null` when none. */
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    private val _isMembershipExpired: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    /**
+     * `true` when the worker's **enrolment status** (`/api/v1/memberships`) or an **order push**
+     * (`/api/v1/orders`) reports a business-rule failure (`401` / expired-state
+     * `IllegalStateException`) — the session is valid but there is no active membership. Drives
+     * the payment-onboarding gate. **Never** set by the plan catalogue (`/api/v1/membership-plans`),
+     * which stays browse-only so an expired worker can still view and select upgrade tiers.
+     */
+    val isMembershipExpired: StateFlow<Boolean> = _isMembershipExpired.asStateFlow()
+
     init {
         loadPlans()
+        validateMembershipAccess()
     }
 
-    /** (Re)loads the plan catalogue; a failure lands on [errorMessage]. */
+    /**
+     * (Re)loads the **public plan catalogue** (`GET /api/v1/membership-plans`). Browse-only: a
+     * failure lands on [errorMessage] and **never** flips [isMembershipExpired] or tears the
+     * session down — the catalogue must always flow into the UI so an expired worker can pick an
+     * upgrade tier.
+     */
     fun loadPlans() {
         viewModelScope.launch {
             getPlans().fold(
                 onSuccess = { _availablePlans.value = it },
                 onFailure = { _errorMessage.value = resolveError(it) },
             )
+        }
+    }
+
+    /**
+     * Validates the worker's **subscription** via the `membership_id` FK
+     * (`GET /api/v1/memberships/{id}`) and syncs the reactive gate. When the subscription is not
+     * active/in-window (or cannot be resolved), [isMembershipExpired] is raised so the selection
+     * screen surfaces the "membership required" prompt. The plan catalogue is unaffected either
+     * way, so an expired worker still sees the upgrade tiers below the prompt.
+     */
+    fun validateMembershipAccess() {
+        viewModelScope.launch {
+            _isMembershipExpired.value = !validateMembership()
         }
     }
 
@@ -169,6 +204,10 @@ class MembershipViewModel(
             _paymentState.value = payMembership.invoke(plan).fold(
                 onSuccess = { PaymentState.Succeeded },
                 onFailure = { throwable ->
+                    // Order push (/orders) is a gated route: a business-rule failure (401 /
+                    // expired-state IllegalStateException) blocks routing to onboarding, in
+                    // addition to surfacing the message.
+                    if (throwable.isMembershipGate()) _isMembershipExpired.value = true
                     _errorMessage.value = resolveError(throwable)
                     PaymentState.Idle
                 },
@@ -202,6 +241,14 @@ class MembershipViewModel(
         else -> throwable.message ?: GENERIC_ERROR
     }
 
+    /**
+     * `true` for the business-rule failures that mean "no active membership" — a `401`
+     * ([UnauthorizedException]) on a gated route, or the backend's expired-state
+     * `IllegalStateException`. A [BadRequestException] (field validation) is **not** a gate.
+     */
+    private fun Throwable.isMembershipGate(): Boolean =
+        this is UnauthorizedException || this is IllegalStateException
+
     companion object {
         private const val MIN_PAN_LENGTH: Int = 13
         private const val MAX_PAN_LENGTH: Int = 19
@@ -221,6 +268,11 @@ class MembershipViewModel(
                 val store = locator.membershipStore
                 return MembershipViewModel(
                     getPlans = GetMembershipPlansUseCase(store),
+                    validateMembership = ValidateMembershipUseCase(store) {
+                        locator.sharedPrefsManager
+                            .getLong(SharedPrefsManager.KEY_MEMBERSHIP_ID)
+                            .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+                    },
                     observePaymentMethods = ObservePaymentMethodsUseCase(store),
                     observeCurrentPlan = ObserveCurrentPlanUseCase(store),
                     addPaymentMethod = AddPaymentMethodUseCase(store),

@@ -1,5 +1,6 @@
 package com.elysium.softwork.payment.membership.data.store
 
+import com.elysium.softwork.payment.membership.domain.model.Membership
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.Order
 import com.elysium.softwork.payment.membership.domain.model.Payment
@@ -32,8 +33,20 @@ interface MembershipStore {
     /** Reactive list of saved (client-side) payment methods. */
     val paymentMethods: StateFlow<List<PaymentMethod>>
 
-    /** Fetches the plan catalogue (`GET /api/v1/membership-plans`). */
+    /**
+     * Fetches the **public plan catalogue** (`GET /api/v1/membership-plans`) — the product tiers
+     * with `price` + `benefit_response_list`. This is a browse-only read: it must never gate
+     * navigation or tear down the session (an expired worker still needs to see upgrade tiers).
+     */
     suspend fun getPlans(): Result<List<MembershipPlan>>
+
+    /**
+     * Fetches a single membership by its `membership_id` (`GET /api/v1/memberships/{id}`) — the
+     * operational subscription instance with validity range + status, resolved from the
+     * `membership_id` foreign key cached off the worker's `user_accounts` record. This is the
+     * access-validation read that drives the session-authorization gate.
+     */
+    suspend fun getMembership(id: Long): Result<Membership>
 
     /** Creates a purchase order (`POST /api/v1/orders`). */
     suspend fun createOrder(order: Order): Result<Order>

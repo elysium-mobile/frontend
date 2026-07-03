@@ -4,6 +4,7 @@ import com.elysium.softwork.payment.membership.application.usecase.ActivateMembe
 import com.elysium.softwork.payment.membership.application.usecase.AddPaymentMethodUseCase
 import com.elysium.softwork.payment.membership.application.usecase.CancelSubscriptionUseCase
 import com.elysium.softwork.payment.membership.application.usecase.GetMembershipPlansUseCase
+import com.elysium.softwork.payment.membership.application.usecase.ValidateMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObserveCurrentPlanUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObservePaymentMethodsUseCase
 import com.elysium.softwork.payment.membership.application.usecase.PayMembershipUseCase
@@ -53,6 +54,7 @@ class MembershipViewModelTest {
     private fun newViewModel(store: FakeMembershipStore = FakeMembershipStore()): MembershipViewModel =
         MembershipViewModel(
             getPlans = GetMembershipPlansUseCase(store),
+            validateMembership = ValidateMembershipUseCase(store) { 1L },
             observePaymentMethods = ObservePaymentMethodsUseCase(store),
             observeCurrentPlan = ObserveCurrentPlanUseCase(store),
             addPaymentMethod = AddPaymentMethodUseCase(store),

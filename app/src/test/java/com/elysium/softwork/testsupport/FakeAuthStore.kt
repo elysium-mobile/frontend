@@ -130,7 +130,7 @@ open class FakeAuthStore(
         val DEFAULT_USER: User = User(
             id = 1L,
             name = "test",
-            gmail = "test@elysium.com",
+            email = "test@elysium.com",
             token = "TEST_TOKEN",
         )
     }

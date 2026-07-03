@@ -1,6 +1,7 @@
 package com.elysium.softwork.payment.membership.data.store
 
 import com.elysium.softwork.payment.membership.data.network.MembershipWebService
+import com.elysium.softwork.payment.membership.domain.model.Membership
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.Order
 import com.elysium.softwork.payment.membership.domain.model.Payment
@@ -8,6 +9,7 @@ import com.elysium.softwork.payment.membership.domain.model.PaymentMethod
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
 import com.elysium.softwork.shared.data.network.BadRequestResponse
+import com.elysium.softwork.shared.data.network.UnauthorizedException
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +50,9 @@ class MembershipStoreImpl(
 
     override suspend fun getPlans(): Result<List<MembershipPlan>> =
         runCatching { unwrapList(webService.getMembershipPlans()) }
+
+    override suspend fun getMembership(id: Long): Result<Membership> =
+        runCatching { unwrap(webService.getMembership(id)) }
 
     override suspend fun createOrder(order: Order): Result<Order> =
         runCatching { unwrap(webService.createOrder(order)) }
@@ -91,9 +96,10 @@ class MembershipStoreImpl(
 
     /**
      * Converts a non-2xx [response] into a typed failure: a `400` into a [BadRequestException]
-     * carrying the parsed [BadRequestResponse], anything else into an [IllegalStateException]
-     * (covers the backend's business-rule `500`s — inactive membership, out-of-range date —
-     * whose message the UI surfaces verbatim).
+     * carrying the parsed [BadRequestResponse], a `401` into an [UnauthorizedException] (the
+     * membership business-gate — the ViewModel maps it to the "membership expired" state), and
+     * anything else into an [IllegalStateException] (covers the backend's business-rule `500`s —
+     * out-of-range date, etc. — whose message the UI surfaces verbatim).
      */
     private fun throwTyped(response: Response<*>): Nothing {
         val rawError: String? = runCatching { response.errorBody()?.string() }.getOrNull()
@@ -103,10 +109,14 @@ class MembershipStoreImpl(
                 ?: BadRequestResponse(message = rawError)
             throw BadRequestException(parsed)
         }
+        if (response.code() == HTTP_UNAUTHORIZED) {
+            throw UnauthorizedException(rawError)
+        }
         error("HTTP ${response.code()} ${response.message().ifBlank { rawError ?: "request failed" }}")
     }
 
     private companion object {
         const val HTTP_BAD_REQUEST: Int = 400
+        const val HTTP_UNAUTHORIZED: Int = 401
     }
 }

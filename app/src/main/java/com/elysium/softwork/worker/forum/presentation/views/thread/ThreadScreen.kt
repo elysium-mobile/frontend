@@ -115,7 +115,7 @@ fun ThreadScreen(
                     )
                 }
             }
-            items(items = messages, key = { it.message_id }) { message ->
+            items(items = messages, key = { it.message_id ?: 0L }) { message ->
                 MessageBubble(message = message)
             }
         }

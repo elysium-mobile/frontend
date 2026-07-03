@@ -2,6 +2,7 @@ package com.elysium.softwork.testsupport
 
 import com.elysium.softwork.payment.membership.data.store.MembershipStore
 import com.elysium.softwork.payment.membership.domain.model.Benefit
+import com.elysium.softwork.payment.membership.domain.model.Membership
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.Order
 import com.elysium.softwork.payment.membership.domain.model.Payment
@@ -33,6 +34,10 @@ open class FakeMembershipStore : MembershipStore {
     /** Value returned by the next [getPlans] call. */
     var nextPlansResult: Result<List<MembershipPlan>> = Result.success(DEFAULT_PLANS)
 
+    /** Value returned by the next [getMembership] (subscription-status validation) call. */
+    var nextMembershipResult: Result<Membership> =
+        Result.success(Membership(membership_id = 1L, membership_status = "ACTIVE"))
+
     /** Value returned by the next [createOrder] call. */
     var nextOrderResult: Result<Order> = Result.success(Order(order_id = 1L))
 
@@ -56,6 +61,8 @@ open class FakeMembershipStore : MembershipStore {
         private set
 
     override suspend fun getPlans(): Result<List<MembershipPlan>> = nextPlansResult
+
+    override suspend fun getMembership(id: Long): Result<Membership> = nextMembershipResult
 
     override suspend fun createOrder(order: Order): Result<Order> {
         lastCreatedOrder = order

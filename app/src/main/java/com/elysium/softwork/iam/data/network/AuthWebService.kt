@@ -22,16 +22,16 @@ interface AuthWebService {
 
     /**
      * Authenticates an existing worker. Send [User.email] + [User.password]; the response
-     * fills [User.id] (the user-account id), [User.gmail], and [User.token].
+     * fills [User.id] (the user-account id), [User.email], and [User.token].
      */
     @POST("api/v1/authentication/sign-in")
     suspend fun signIn(@Body credentials: User): Response<User>
 
     /**
      * Registers a new employee account. Send the employee sign-up subset of [User]
-     * ([User.name], [User.lastName], [User.email], [User.password], [User.dni],
-     * [User.anonymousName], [User.dateStart], [User.position], [User.salary]); the response
-     * fills [User.id], [User.gmail], and [User.token].
+     * ([User.name], [User.last_name], [User.email], [User.password], [User.dni],
+     * [User.anonymous_name], [User.date_start], [User.position], [User.salary]); the response
+     * fills [User.id], [User.email], and [User.token].
      */
     @POST("api/v1/authentication/sign-up/employee")
     suspend fun signUpEmployee(@Body request: User): Response<User>
@@ -43,4 +43,12 @@ interface AuthWebService {
      */
     @GET("api/v1/employee-profile")
     suspend fun getEmployeeProfiles(): Response<List<User>>
+
+    /**
+     * Lists every user account. Used by the post-login sequential sync to locate the worker's
+     * own account by matching [User.user_account_id] against the persisted account id, then
+     * extracting the [User.membership_id] foreign key that anchors the membership check.
+     */
+    @GET("api/v1/user_accounts")
+    suspend fun getUserAccounts(): Response<List<User>>
 }

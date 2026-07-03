@@ -61,11 +61,11 @@ interface MembershipWebService {
 
     // region Membership Plans & Benefits
     /** Lists the available plan catalogue (with nested benefits). */
-    @GET("api/v1/membership-plans")
+    @GET("api/v1/memberships-plans")
     suspend fun getMembershipPlans(): Response<List<MembershipPlan>>
 
     /** Links a benefit to a plan. */
-    @POST("api/v1/membership-plans/{id}/benefits")
+    @POST("api/v1/memberships-plans/{id}/benefits")
     suspend fun addBenefitToPlan(
         @Path("id") membershipPlanId: Long,
         @Body benefit: Benefit,

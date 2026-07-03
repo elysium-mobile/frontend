@@ -228,7 +228,7 @@ private fun MethodsHeader(onBack: () -> Unit) {
 @Composable
 private fun NextChargeCard(plan: MembershipPlan?) {
     val price: String = plan?.price?.let { stringResource(R.string.payment_price_format, it) }.orEmpty()
-    val name: String = plan?.plan_name ?: plan?.planName.orEmpty()
+    val name: String = plan?.plan_name.orEmpty()
     val captionColor: Color = Color.White.copy(alpha = 0.85f)
     val subtitleColor: Color = Color.White.copy(alpha = 0.9f)
 

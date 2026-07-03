@@ -50,6 +50,7 @@ class SharedPrefsManager(context: Context) {
             remove(KEY_USER_EMAIL)
             remove(KEY_USER_PASSWORD)
             remove(KEY_GOOGLE_SESSION)
+            remove(KEY_MEMBERSHIP_ID)
         }
     }
 
@@ -95,6 +96,16 @@ class SharedPrefsManager(context: Context) {
          * feedback / survey-response calls that key off the employee profile.
          */
         const val KEY_EMPLOYEE_PROFILE_ID: String = "employee_profile_id"
+
+        /**
+         * Storage key for the backend `membership_id` — the foreign key exposed on the worker's
+         * `user_accounts` record. Resolved by the post-login sequential call to
+         * `GET /api/v1/user_accounts` (matched by `user_account_id`) and used by the
+         * session-authorization gate to query `GET /api/v1/memberships/{id}` for the live
+         * subscription status + validity window. Part of the IAM session — cleared by
+         * [clearSession].
+         */
+        const val KEY_MEMBERSHIP_ID: String = "membership_id"
 
         /** Storage key for the worker's email — retained for programmatic re-authentication. */
         const val KEY_USER_EMAIL: String = "user_email"

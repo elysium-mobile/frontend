@@ -11,36 +11,28 @@ package com.elysium.softwork.shared.data.network
  *   "status": 400,
  *   "error": "Bad Request",
  *   "message": "JSON validation failed",
- *   "fieldErrors": { "argument": "[CreateUserCommand] dni must be 8 characters long" }
+ *   "field_errors": { "dni": "must not be blank" }
  * }
  * ```
  *
  * Framework-agnostic by design: property names match the wire keys exactly so Gson resolves
- * them by reflection without `@SerializedName`.
- *
- * **Wire asymmetry.** The live Spring Boot `GlobalExceptionHandler` serializes the validation
- * map under the camelCase key **`fieldErrors`**. Older/alternate handler shapes have emitted
- * the same map under snake_case `field_errors`. Rather than annotate (forbidden) or map, both
- * spellings coexist as nullable fields and [primaryFieldError] consults whichever Gson filled.
+ * them by reflection without `@SerializedName`. The backend's `GlobalExceptionHandler` records
+ * are annotated `@JsonNaming(SnakeCaseStrategy)`, so **uniform snake_case** applies to both the
+ * envelope (`field_errors`) and — since the 2026-07-03 migration — the dynamic keys inside the
+ * map (e.g. `last_name`, `user_account_id`), which mirror the offending DTO field names.
  *
  * @property status numeric HTTP status echoed in the body (always `400` for this shape).
  * @property error short reason phrase (`"Bad Request"`).
  * @property message human-readable summary of the rejection.
- * @property fieldErrors map of offending field → validation message, camelCase wire key used
- *   by the live backend. Nullable because some 400s carry only [message] with no per-field detail.
- * @property field_errors snake_case alias of the same map for handler variants that emit it
- *   under the legacy key. Coexists with [fieldErrors] to absorb the asymmetry annotation-free.
+ * @property field_errors map of offending field → validation message. Nullable because some
+ *   400s (internal `IllegalArgumentException`) carry only [message] with no per-field detail.
  */
 data class BadRequestResponse(
     val status: Int = 400,
     val error: String? = null,
     val message: String? = null,
-    val fieldErrors: Map<String, String>? = null,
     val field_errors: Map<String, String>? = null,
 ) {
-
-    /** Whichever validation map the wire supplied (camelCase preferred, snake_case fallback). */
-    private val errors: Map<String, String>? get() = fieldErrors ?: field_errors
 
     /**
      * Best-effort single user-facing message extracted from this payload.
@@ -50,8 +42,8 @@ data class BadRequestResponse(
      * to the top-level [message]. Returns `null` only when the payload is entirely empty.
      */
     fun primaryFieldError(): String? =
-        errors?.get(ARGUMENT_KEY)
-            ?: errors?.values?.firstOrNull()
+        field_errors?.get(ARGUMENT_KEY)
+            ?: field_errors?.values?.firstOrNull()
             ?: message
 
     companion object {
@@ -73,3 +65,20 @@ data class BadRequestResponse(
 class BadRequestException(
     val response: BadRequestResponse,
 ) : RuntimeException(response.primaryFieldError() ?: "Bad Request")
+
+/**
+ * Typed failure raised by the data layer when the backend answers `401 Unauthorized` on an
+ * authenticated call.
+ *
+ * Most `401`s are session-invalidation cases handled globally by `AuthInterceptor`'s trap
+ * (which wipes the session and routes to login). A **business-gate** `401` — e.g.
+ * `GET /api/v1/membership-plans` for a worker with no active membership — is exempted from that
+ * trap and instead surfaced as this typed failure through the `Result` channel, so the
+ * membership ViewModel can map it to a "membership expired" UI state and route to payment
+ * onboarding rather than logging the (validly authenticated) worker out.
+ *
+ * @param rawBody the raw error body, when present, for diagnostics.
+ */
+class UnauthorizedException(
+    rawBody: String? = null,
+) : RuntimeException(rawBody?.ifBlank { null } ?: "Unauthorized")

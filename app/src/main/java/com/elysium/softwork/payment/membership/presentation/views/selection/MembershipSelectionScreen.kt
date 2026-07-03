@@ -66,6 +66,7 @@ fun MembershipSelectionScreen(
 ) {
     val plans: List<MembershipPlan> by viewModel.availablePlans.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val isMembershipExpired: Boolean by viewModel.isMembershipExpired.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -73,6 +74,14 @@ fun MembershipSelectionScreen(
             .background(AccentWhite),
     ) {
         SelectionHeader()
+
+        // Membership business-gate: driven by enrolment-status validation (`/memberships`) or an
+        // order-push failure — NOT by the plan catalogue, which always renders below. When the
+        // worker has no active membership, this prompt sits atop the (freely browsable) upgrade
+        // tiers rather than degrading or logging out.
+        if (isMembershipExpired) {
+            MembershipRequiredBanner()
+        }
 
         errorMessage?.let { message ->
             Text(
@@ -118,9 +127,36 @@ private fun SelectionHeader() {
 }
 
 @Composable
+private fun MembershipRequiredBanner() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        color = AccentMint,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.payment_membership_required),
+                color = PrimaryNavy,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.payment_membership_required_detail),
+                color = AccentDark,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Normal,
+            )
+        }
+    }
+}
+
+@Composable
 private fun PlanCard(plan: MembershipPlan, onSelect: (String) -> Unit) {
     val accent: Color = PrimarySky
-    val planName: String = plan.plan_name ?: plan.planName.orEmpty()
+    val planName: String = plan.plan_name.orEmpty()
     val priceLabel: String = plan.price?.let { stringResource(R.string.payment_price_format, it) }.orEmpty()
     val features: List<String> = plan.benefit_response_list?.mapNotNull { it.title }.orEmpty()
     val onClick: () -> Unit = { onSelect((plan.plan_id ?: 0L).toString()) }

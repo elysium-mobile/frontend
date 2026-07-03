@@ -4,34 +4,24 @@ package com.elysium.softwork.feedback.domain.model
  * A worker's submission to a [Survey] — the annotation-free bean for the `survey-responses`
  * endpoints (the *Bean / Pragmatic Shortcut*).
  *
- * Property names mirror the backend wire keys exactly so Gson maps them by reflection without
- * `@SerializedName`. The create request uses camelCase while the response comes back in
- * snake_case, so both spellings of each concept coexist as nullable fields:
- * - **survey**: request key `surveyId`, response key `survey_id`.
- * - **employee profile**: request key `employeeProfileId`, response key `employee_profile_id`.
- * - **submission date**: request key `submittedAt`, response key `submitted_at`.
+ * The backend serializes **uniform snake_case**, so every property is snake_case and Gson maps
+ * each by reflection without `@SerializedName`. Request and response share the same keys, so a
+ * single field per concept covers both directions.
  *
- * When building a POST body, populate the camelCase request keys (`surveyId`,
- * `employeeProfileId`, `submittedAt`) plus [commentary] / [cause]; the snake_case fields are
- * filled on the way back.
+ * When building a POST body, populate [survey_id], [employee_profile_id], [submitted_at],
+ * [commentary] and [cause]; [survey_response_id] is filled on the way back.
  *
  * @property survey_response_id primary key returned for a stored submission.
- * @property surveyId target survey on the **create request** (`surveyId`).
- * @property survey_id target survey on the **response** (`survey_id`).
- * @property employeeProfileId author profile on the **create request** (`employeeProfileId`).
- * @property employee_profile_id author profile on the **response** (`employee_profile_id`).
- * @property submittedAt submission date on the **create request** (`submittedAt`).
- * @property submitted_at submission date on the **response** (`submitted_at`).
- * @property commentary free-text feedback (consistent request/response key).
- * @property cause categorized reason (consistent request/response key).
+ * @property survey_id target survey (request + response).
+ * @property employee_profile_id author profile (request + response).
+ * @property submitted_at submission date, ISO `yyyy-MM-dd` (request + response).
+ * @property commentary free-text feedback (request + response).
+ * @property cause categorized reason (request + response).
  */
 data class SurveyResponse(
     val survey_response_id: Long? = null,
-    val surveyId: Long? = null,
     val survey_id: Long? = null,
-    val employeeProfileId: Long? = null,
     val employee_profile_id: Long? = null,
-    val submittedAt: String? = null,
     val submitted_at: String? = null,
     val commentary: String? = null,
     val cause: String? = null,

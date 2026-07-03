@@ -133,7 +133,7 @@ class AuthViewModelTest {
 
     @Test
     fun `submitLogin trims email then transitions Idle to Success on active membership`() = runTest {
-        val expectedUser = User(id = 42L, name = "Cesar", token = "JWT_OK", membershipStatus = "ACTIVE")
+        val expectedUser = User(id = 42L, name = "Cesar", token = "JWT_OK", membership_status = "ACTIVE")
         val store = FakeAuthStore(nextLoginResult = Result.success(expectedUser))
         val vm = newViewModel(store)
         vm.onEmailChange("  worker@elysium.com  ")
@@ -151,7 +151,7 @@ class AuthViewModelTest {
 
     @Test
     fun `submitLogin routes to MembershipRequired when the membership is not active`() = runTest {
-        val inactiveUser = User(id = 42L, name = "Cesar", token = "JWT_OK", membershipStatus = "INACTIVE")
+        val inactiveUser = User(id = 42L, name = "Cesar", token = "JWT_OK", membership_status = "INACTIVE")
         val store = FakeAuthStore(nextLoginResult = Result.success(inactiveUser))
         val vm = newViewModel(store)
         vm.onEmailChange("worker@elysium.com")

@@ -49,7 +49,7 @@ class ForumStoreImpl(
 
     override suspend fun refreshMessages(threadId: Long): Result<Unit> = runCatching {
         val messages = unwrapList(webService.getMessages())
-            .filter { it.thread_id == threadId || it.threadId == threadId }
+            .filter { it.thread_id == threadId }
         if (messages.isNotEmpty()) messageDao.upsertAll(messages)
     }
 

@@ -37,7 +37,7 @@ class SurveyStoreImpl(
     override suspend fun getSurveyQuestions(surveyId: Long): Result<List<QuestionSurvey>> =
         runCatching {
             unwrapList(webService.getQuestionSurveys())
-                .filter { it.survey_id == surveyId || it.surveyId == surveyId }
+                .filter { it.survey_id == surveyId }
         }
 
     override suspend fun getSurveyResponses(surveyId: Long): Result<List<SurveyResponse>> =

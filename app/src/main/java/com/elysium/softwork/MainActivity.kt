@@ -149,6 +149,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Session-authorization membership check: on cold-start and immediately after login,
+        // validate the worker's subscription (cached `membership_id` → GET /memberships/{id},
+        // status + validity window). The use case syncs the reactive `hasMembership` gate, so a
+        // non-active subscription reactively routes the worker to payment onboarding below.
+        LaunchedEffect(isAuthenticated) {
+            if (isAuthenticated) locator.validateMembershipUseCase()
+        }
+
         // Stable callback references — cached so child hosts do not re-bind their
         // handlers on every parent recomposition.
         val onAuthComplete: () -> Unit = remember { { isAuthenticated = true } }

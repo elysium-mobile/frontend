@@ -11,8 +11,8 @@ import java.time.LocalDate
  * Owns the request-assembly rules: the free-text fields are trimmed, the reporting
  * `user_account_id` is resolved **dynamically** from [SharedPrefsManager] (cached during the
  * post-login sequential profile sync) and bound to the body, and the report date defaults to
- * today (ISO `yyyy-MM-dd`). The camelCase request keys (`userAccountId`, `reportDate`,
- * `areaCompanyId`) are populated per the backend contract.
+ * today (ISO `yyyy-MM-dd`). The snake_case request keys (`user_account_id`, `report_date`,
+ * `area_company_id`) are populated per the backend contract.
  *
  * Stateless; safe to share a single instance process-wide.
  *
@@ -45,9 +45,9 @@ class SubmitForumReportUseCase(
             Report(
                 reason = reason.trim(),
                 description = description.trim(),
-                userAccountId = accountId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
-                reportDate = reportDate.ifBlank { LocalDate.now().toString() },
-                areaCompanyId = areaCompanyId,
+                user_account_id = accountId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
+                report_date = reportDate.ifBlank { LocalDate.now().toString() },
+                area_company_id = areaCompanyId,
             ),
         )
     }

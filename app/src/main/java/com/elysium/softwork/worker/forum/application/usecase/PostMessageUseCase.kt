@@ -9,8 +9,8 @@ import com.elysium.softwork.worker.forum.domain.model.Message
  *
  * Owns the request-assembly rules: the content is trimmed and the author's `user_account_id`
  * is resolved **dynamically** from [SharedPrefsManager] (cached during the post-login
- * sequential profile sync) and bound to the body. The camelCase request keys (`userAccountId`,
- * `contentMessage`, `threadId`) are populated per the backend contract.
+ * sequential profile sync) and bound to the body. The snake_case request keys
+ * (`user_account_id`, `content_message`, `thread_id`) are populated per the backend contract.
  *
  * Stateless; safe to share a single instance process-wide.
  *
@@ -34,9 +34,9 @@ class PostMessageUseCase(
         val accountId: Long = prefs.getLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID)
         return store.postMessage(
             Message(
-                threadId = threadId,
-                userAccountId = accountId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
-                contentMessage = content.trim(),
+                thread_id = threadId,
+                user_account_id = accountId.takeIf { it != SharedPrefsManager.DEFAULT_LONG },
+                content_message = content.trim(),
             ),
         )
     }
