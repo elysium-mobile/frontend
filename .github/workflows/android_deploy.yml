@@ -23,14 +23,18 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      # 3. Forzar a Gradle a usar Java 21 mediante variables de entorno globales
+      # 3. Crear el archivo secrets.properties dinámicamente con los secretos reales de GitHub
+      - name: Generate secrets.properties
+        run: |
+          echo "BACKEND_BASE_URL=${{ secrets.BACKEND_BASE_URL }}" >> secrets.properties
+          echo "API_KEY_GEMINI=${{ secrets.API_KEY_GEMINI }}" >> secrets.properties
+          echo "GOOGLE_OAUTH_CLIENT=${{ secrets.GOOGLE_OAUTH_CLIENT }}" >> secrets.properties
+          echo "API_KEY_EXTERNAL_SERVICE=${{ secrets.API_KEY_EXTERNAL_SERVICE }}" >> secrets.properties
+
+      # 4. Forzar a Gradle a usar Java 21 mediante variables de entorno globales
       - name: Build APK with Java 21 Force
         env:
           JAVA_HOME: ${{ steps.setup-java.outputs.path }}
-          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
-          API_KEY_GEMINI: ${{ secrets.API_KEY_GEMINI }}
-          GOOGLE_OAUTH_CLIENT: ${{ secrets.GOOGLE_OAUTH_CLIENT }}
-          API_KEY_EXTERNAL_SERVICE: ${{ secrets.API_KEY_EXTERNAL_SERVICE }}
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug -x test
