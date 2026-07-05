@@ -1,0 +1,2296 @@
+# SoftWork Platform — API Documentation
+
+> Exhaustive documentation of the Spring Boot backend. Contains exact request/response JSON
+> extracted directly from the DTOs (`interfaces/rest/resources`) of each bounded context,
+> including integrations with external services (Cloudinary, Stripe, Google Gemini).
+
+---
+
+## UPDATE (2026-07-03): Uniform snake_case Naming
+
+**The naming inconsistency described in previous versions of this document has been removed.**
+
+Every DTO under `interfaces/rest/resources` (all `*Request` and `*Response` records, across **all**
+bounded contexts) now carries a class-level annotation:
+
+```java
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+public record CreateUserRequest( ... ) { }
+```
+
+- **All per-field `@JsonProperty("...")` annotations were removed.** Naming is now governed
+  exclusively by the class-level `SnakeCaseStrategy`. This applies to both **serialization**
+  (responses) and **deserialization** (requests).
+- **Result: every JSON key is snake_case, uniformly, for both requests and responses.** The former
+  mix of camelCase/snake_case is gone.
+- The global `spring.jackson.property-naming-strategy=SNAKE_CASE` in `application.properties` still
+  applies, but the DTOs no longer depend on it — each record declares the strategy explicitly, which
+  is the source of truth.
+
+### Pre-existing bugs that this standardization fixed
+
+| DTO | Old JSON key | New JSON key | Was |
+|---|---|---|---|
+| `CompanyResponse` | `comapany_id` | `company_id` | typo in an `@JsonProperty` |
+| `CreateSurveyRequest` / `UpdateSurveyRequest` / `SurveyResponse` | `expirationType` | `expiration_time` | request/response now match (field is `expirationTime`) |
+| `InitiateRefundRequest` | `refoundAmountCents` | `refund_amount_cents` | typo in an `@JsonProperty` |
+| Many DTOs (e.g. `lastName`, `userId`, `companyId`, …) | camelCase | snake_case | `@JsonProperty` overrode the global strategy |
+
+### Residual quirks (NOT naming — these come from misnamed/typo'd Java fields, left intact)
+
+The strategy converts the **Java field name** to snake_case. A few fields are themselves misnamed in
+the domain records, so their canonical snake_case still looks odd. These field names were **not**
+altered (out of scope for the naming change):
+
+| DTO | Java field | JSON key | Note |
+|---|---|---|---|
+| `EmployeeProfileResponse` | `starStart` | `star_start` | field is a typo of "dateStart"; response key differs from the request's `date_start` |
+| `RRHHProfileSignUpRequest`, `CreateRRHHProfileRequest`, `UpdateRRHHProfileRequest`, `RRHHProfileResponse` | `RRHHDepartment` | `rrhhdepartment` | leading consecutive capitals → Jackson emits **no** underscore |
+
+> **Note on Jackson's algorithm**: `SnakeCaseStrategy` does not insert an underscore between
+> consecutive uppercase letters. So `RUC` → `ruc` and `RRHHDepartment` → `rrhhdepartment`
+> (not `rrhh_department`). Standard camelCase like `userAccountId` → `user_account_id` behaves as
+> expected.
+
+---
+
+## Table of Contents
+
+1. [Connection and Configuration](#1-connection-and-configuration)
+2. [Authentication (IAM)](#2-authentication-iam)
+3. [Bounded Context: IAM](#3-bounded-context-iam)
+4. [Bounded Context: Dashboard](#4-bounded-context-dashboard)
+5. [Bounded Context: Feedback](#5-bounded-context-feedback)
+6. [Bounded Context: Payment Service](#6-bounded-context-payment-service)
+7. [Bounded Context: Notification](#7-bounded-context-notification)
+8. [Bounded Context: Worker Forum](#8-bounded-context-worker-forum)
+9. [Bounded Context: Profile Performance](#9-bounded-context-profile-performance)
+10. [Error Handling](#10-error-handling)
+11. [External Services: Cloudinary, Stripe, Google Gemini](#11-external-services-cloudinary-stripe-google-gemini)
+12. [Seed Data](#12-seed-data)
+13. [Naming Reference (Request vs Response)](#13-naming-reference-request-vs-response)
+14. [Endpoint Routes — Quick Reference](#14-endpoint-routes--quick-reference)
+
+---
+
+## 1. Connection and Configuration
+
+### PostgreSQL Database
+
+**`dev` profile** (`application-dev.properties`):
+```
+URL:      jdbc:postgresql://localhost:5432/softwork
+User:     postgres
+Password: postgres
+Port:     5432
+```
+
+**`prod` profile** (`application-prod.properties`) — environment variables:
+```properties
+spring.datasource.url=${SPRING_DATASOURCE_URL:jdbc:postgresql://db:5432/softwork}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME:postgres}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD:postgres}
+server.port=${PORT:8080}
+authorization.jwt.secret=${JWT_SECRET}
+authorization.jwt.expiration.days=${JWT_EXPIRATION_DAYS:7}
+swagger.server.url=https://${API_HOST}
+```
+
+> **Note**: In production the default port changes to `8080` (via `${PORT:8080}`), different from
+> the `8092` used in dev.
+
+```sql
+CREATE DATABASE softwork;
+```
+
+### Starting the Backend
+
+```bash
+# Development
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+# Production (requires environment variables)
+./mvnw spring-boot:run -Dspring-boot.run.profiles=prod
+```
+
+- **Port (dev)**: `8092` — **Base URL**: `http://localhost:8092`
+- **Port (prod)**: `${PORT:8080}` — configurable via environment variable
+- **Swagger UI**: `http://localhost:8092/swagger-ui.html` (dev)
+- Tables are created automatically (`ddl-auto=update`)
+- `data.sql` seeds test data on startup (`spring.sql.init.mode=always` also enabled in prod)
+
+### Required Headers
+
+```
+Content-Type: application/json
+Authorization: Bearer <JWT_TOKEN>    (except public endpoints)
+```
+
+### Production Environment Variables (Summary)
+
+| Variable | Service | Description |
+|---|---|---|
+| `SPRING_DATASOURCE_URL` | PostgreSQL | JDBC URL of the DB |
+| `SPRING_DATASOURCE_USERNAME` | PostgreSQL | DB user |
+| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL | DB password |
+| `JWT_SECRET` | Security | Key used to sign JWTs (mandatory, no default) |
+| `JWT_EXPIRATION_DAYS` | Security | Token expiration in days (default 7) |
+| `PORT` | Server | HTTP port (default 8080) |
+| `API_HOST` | Swagger | Public host for the server URL shown in Swagger |
+| `CLOUDINARY_URL` | Cloudinary | Connection URL including credentials |
+| `STRIPE_SECRET_KEY` | Stripe | API secret key (`sk_...`) |
+| `STRIPE_WEBHOOK_SECRET` | Stripe | Webhook signing secret (`whsec_...`) |
+| `GOOGLE_GENAI_API_KEY` | Google Gemini | Google GenAI API key |
+
+See section [11](#11-external-services-cloudinary-stripe-google-gemini) for the full detail of
+these integrations.
+
+---
+
+## 2. Authentication (IAM)
+
+Public endpoints — no token required.
+
+### POST `/api/v1/authentication/sign-in`
+
+**Request** (`SignInRequest`):
+```json
+{
+  "email": "carlos.mendoza@techcorp.pe",
+  "password": "password123"
+}
+```
+
+**Response 200** (`AuthenticatedUserAccountResponse`):
+```json
+{
+  "id": 1,
+  "email": "carlos.mendoza@techcorp.pe",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+---
+
+### POST `/api/v1/authentication/sign-up/employee`
+
+**Request** (`EmployeeProfileSignUpRequest`):
+```json
+{
+  "name": "Juan",
+  "last_name": "Perez",
+  "phone_number": "987654321",
+  "dni": "12345678",
+  "email": "juan@example.com",
+  "password": "myPassword123",
+  "anonymous_name": "AnonymousJuan",
+  "date_start": "2026-01-15",
+  "position": "Backend Developer",
+  "salary": 5000
+}
+```
+
+**Response 200** (`AuthenticatedUserAccountResponse`):
+```json
+{
+  "id": 9,
+  "email": "juan@example.com",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+---
+
+### POST `/api/v1/authentication/sign-up/rrhh`
+
+**Request** (`RRHHProfileSignUpRequest`):
+```json
+{
+  "name": "Ana",
+  "last_name": "Garcia",
+  "phone_number": "999888777",
+  "dni": "87654321",
+  "email": "ana@example.com",
+  "password": "myPassword123",
+  "anonymous_name": "AnonymousAna",
+  "rrhhdepartment": "Human Resources",
+  "status_hierarchy": "Manager"
+}
+```
+
+> **Note**: the key is `rrhhdepartment` (no underscore) because the Java field is `RRHHDepartment`
+> and Jackson's `SnakeCaseStrategy` does not split consecutive capitals.
+
+**Response 200** (`AuthenticatedUserAccountResponse`):
+```json
+{
+  "id": 9,
+  "email": "ana@example.com",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+---
+
+## 3. Bounded Context: IAM
+
+> Package: `pe.edu.upc.soft.work.platform.iam`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 3.1 Users — `/api/v1/users`
+
+#### POST `/api/v1/users` — Create user
+
+**Request** (`CreateUserRequest`):
+```json
+{
+  "name": "string",
+  "last_name": "string",
+  "phone_number": "string",
+  "dni": "string"
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `name` | `name` | String | @NotNull @NotBlank | max 100 chars |
+| `last_name` | `lastName` | String | @NotNull @NotBlank | max 100 chars |
+| `phone_number` | `phoneNumber` | String | @NotNull @NotBlank | max 15 chars |
+| `dni` | `dni` | String | @NotNull @NotBlank @Min(0) | max 8 chars, unique |
+
+**Response 201** (`UserResponse`):
+```json
+{
+  "user_id": 1,
+  "name": "Carlos",
+  "last_name": "Mendoza",
+  "phone_number": "987654321",
+  "dni": "12345678"
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `user_id` | `userId` | Long | Auto-generated ID |
+| `name` | `name` | String | |
+| `last_name` | `lastName` | String | |
+| `phone_number` | `phoneNumber` | String | |
+| `dni` | `dni` | String | |
+
+#### PUT `/api/v1/users/{id}` — Update user
+
+**Request** (`UpdateUserRequest`): Same structure as `CreateUserRequest`.
+
+#### GET `/api/v1/users` — List all
+
+**Response 200**: `UserResponse[]`
+
+#### GET `/api/v1/users/{id}` — Get by ID
+
+**Response 200**: `UserResponse` | **404** if not found.
+
+#### DELETE `/api/v1/users/{userId}` — Delete
+
+**Response 200/204**
+
+**Errors**: Duplicate DNI → `500 RuntimeException`.
+
+---
+
+### 3.2 User Accounts — `/api/v1/user_accounts`
+
+#### POST `/api/v1/user_accounts` — Create account
+
+**Request** (`CreateUserAccountRequest`):
+```json
+{
+  "user_id": 1,
+  "email": "juan@example.com",
+  "password": "myPassword123",
+  "anonymous_name": "AnonymousJuan",
+  "membership_id": 1,
+  "company_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `user_id` | `userId` | Long | @NotNull @NotBlank |
+| `email` | `email` | String | @NotNull @NotBlank |
+| `password` | `password` | String | @NotNull @NotBlank |
+| `anonymous_name` | `anonymousName` | String | @NotNull @NotBlank |
+| `membership_id` | `membershipId` | Long | @NotNull @NotBlank |
+| `company_id` | `companyId` | Long | @NotNull @NotBlank |
+
+**Response 201** (`UserAccountResponse`):
+```json
+{
+  "user_account_id": 1,
+  "user_id": 1,
+  "email": "juan@example.com",
+  "password": "$2a$10$...",
+  "anonymous_name": "AnonymousJuan",
+  "membership_id": 1,
+  "company_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `user_account_id` | `userAccountId` | Long | |
+| `user_id` | `userId` | Long | |
+| `email` | `email` | String | |
+| `password` | `password` | String | BCrypt hash is exposed |
+| `anonymous_name` | `anonymousName` | String | |
+| `membership_id` | `membershipId` | Long | |
+| `company_id` | `companyId` | Long | |
+
+#### PUT `/api/v1/user_accounts/{id}` — Update
+
+**Request** (`UpdateUserAccountRequest`): Same structure as `CreateUserAccountRequest`.
+
+#### GET `/api/v1/user_accounts` — List all
+
+#### DELETE `/api/v1/user_accounts/{id}` — Delete
+
+---
+
+### 3.3 Employee Profiles — `/api/v1/employee-profile`
+
+#### POST `/api/v1/employee-profile` — Create profile
+
+**Request** (`CreateEmployeeProfileRequest`):
+```json
+{
+  "date_start": "2026-01-15",
+  "position": "Backend Developer",
+  "salary": 5000,
+  "work_of_team_id": 1,
+  "user_account_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `date_start` | `dateStart` | Date | @NotNull @NotBlank |
+| `position` | `position` | String | @NotNull @NotBlank |
+| `salary` | `salary` | Integer | @NotNull @NotBlank |
+| `work_of_team_id` | `workOfTeamId` | Long | @NotNull @NotBlank |
+| `user_account_id` | `UserAccountId` | Long | @NotNull @NotBlank |
+
+**Response 201** (`EmployeeProfileResponse`):
+```json
+{
+  "employee_profile_id": 1,
+  "star_start": "2026-01-15",
+  "position": "Backend Developer",
+  "salary": 5000,
+  "work_of_team_id": 1,
+  "user_account_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `employee_profile_id` | `employeeProfileId` | Long | |
+| `star_start` | `starStart` | Date | **field is a typo of "dateStart"** → serializes as `star_start` |
+| `position` | `position` | String | |
+| `salary` | `salary` | Integer | |
+| `work_of_team_id` | `workOfTeamId` | Long | |
+| `user_account_id` | `UserAccountId` | Long | |
+
+> **RESIDUAL INCONSISTENCY**: the request sends `date_start` but the response returns `star_start`,
+> because the response record's field is literally named `starStart` (a typo left intact — renaming
+> domain fields was out of scope for the naming change).
+
+#### PUT `/api/v1/employee-profile/{id}` — Update
+
+**Request** (`UpdateEmployeeProfileRequest`): Same structure as Create.
+
+#### GET `/api/v1/employee-profile` — List all
+
+#### GET `/api/v1/employee-profile/{id}` — Get by ID
+
+#### DELETE `/api/v1/employee-profile/{employeeProfileId}` — Delete
+
+---
+
+### 3.4 RRHH Profiles — `/api/v1/rrhh-profiles`
+
+#### POST `/api/v1/rrhh-profiles` — Create RRHH profile
+
+**Request** (`CreateRRHHProfileRequest`):
+```json
+{
+  "rrhhdepartment": "Human Resources",
+  "status_hierarchy": "Manager",
+  "user_account_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `rrhhdepartment` | `RRHHDepartment` | String | @NotNull @NotBlank |
+| `status_hierarchy` | `statusHierarchy` | String | @NotNull @NotBlank |
+| `user_account_id` | `userAccountId` | Long | @NotNull @NotBlank |
+
+> **Note**: `RRHHDepartment` → `rrhhdepartment` (no underscore). This is a change from the previous
+> `rrhh_department`, which had been forced by an explicit `@JsonProperty` now removed.
+
+**Response 201** (`RRHHProfileResponse`):
+```json
+{
+  "rrhh_profile_id": 1,
+  "rrhhdepartment": "Human Resources",
+  "status_hierarchy": "Manager",
+  "user_account_id": 1
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `rrhh_profile_id` | `rrhhProfileId` | Long | |
+| `rrhhdepartment` | `RRHHDepartment` | String | no underscore (consecutive capitals) |
+| `status_hierarchy` | `statusHierarchy` | String | |
+| `user_account_id` | `userAccountId` | Long | |
+
+#### PUT `/api/v1/rrhh-profiles/{id}` — Update
+
+**Request** (`UpdateRRHHProfileRequest`): Same structure as Create.
+
+#### GET `/api/v1/rrhh-profiles` — List all
+
+#### GET `/api/v1/rrhh-profiles/{id}` — Get by ID
+
+#### DELETE `/api/v1/rrhh-profiles/{id}` — Delete
+
+---
+
+## 4. Bounded Context: Dashboard
+
+> Package: `pe.edu.upc.soft.work.platform.dashboard`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 4.1 Companies — `/api/v1/companies`
+
+#### POST `/api/v1/companies` — Create company
+
+**Request** (`CreateCompanyRequest`):
+```json
+{
+  "name": "TechCorp SAC",
+  "ruc": "20123456789",
+  "contact_email": "info@techcorp.pe",
+  "contact_phone": "015551234"
+}
+```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `name` | `name` | String | @NotNull @NotBlank |
+| `ruc` | `RUC` | String | @NotNull @NotBlank, unique |
+| `contact_email` | `contactEmail` | String | @NotNull @NotBlank |
+| `contact_phone` | `contactPhone` | String | @NotNull @NotBlank |
+
+> **Note**: `RUC` → `ruc` (consecutive capitals collapse without underscores).
+
+**Response 201** (`CompanyResponse`):
+```json
+{
+  "company_id": 1,
+  "name": "TechCorp SAC",
+  "ruc": "20123456789",
+  "contact_email": "info@techcorp.pe",
+  "contact_phone": "015551234",
+  "employees": [],
+  "area_company_responses": []
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `company_id` | `companyId` | Long | **typo fixed**: was `comapany_id`, now correctly `company_id` |
+| `name` | `name` | String | |
+| `ruc` | `RUC` | String | request and response now match (`ruc`) |
+| `contact_email` | `contactEmail` | String | request and response now match |
+| `contact_phone` | `contactPhone` | String | request and response now match |
+| `employees` | `employees` | UserAccountResponse[] | List of linked employees |
+| `area_company_responses` | `areaCompanyResponses` | AreaCompanyResponse[] | List of linked areas |
+
+#### PUT `/api/v1/companies/{id}` — Update
+
+**Request** (`UpdateCompanyRequest`): Same structure as Create.
+
+#### GET `/api/v1/companies` — List all
+
+#### GET `/api/v1/companies/{id}` — Get by ID
+
+#### DELETE `/api/v1/companies/{id}` — Delete (204 No Content)
+
+#### GET `/api/v1/companies/search?name={name}` — Search by name
+
+**Response 200**: `CompanyResponse[]` | **404** if no results.
+
+#### POST `/api/v1/companies/{companyId}/employees` — Add employee
+
+**Request** (`AddEmployeeToCompanyRequest`):
+```json
+{
+  "employee_id": 1
+}
+```
+
+**Response 200**: Updated `CompanyResponse`.
+
+#### POST `/api/v1/companies/{companyId}/area-companies` — Add area
+
+**Request** (`AddAreaCompanyToCompanyRequest`):
+```json
+{
+  "area_company_id": 1
+}
+```
+
+**Response 200**: Updated `CompanyResponse`.
+
+---
+
+### 4.2 Area Companies — `/api/v1/area-company`
+
+> Note: the route is **singular** `/area-company`, not `/area-companies`.
+
+#### POST `/api/v1/area-company` — Create area
+
+**Request** (`CreateAreaCompanyRequest`):
+```json
+{
+  "name": "Software Development",
+  "annual_budget": 100000,
+  "company_id": 1
+}
+```
+
+**Response 201** (`AreaCompanyResponse`):
+```json
+{
+  "area_company_id": 1,
+  "name": "Software Development",
+  "annual_budget": 100000,
+  "company_id": 1,
+  "unit_of_work_list": []
+}
+```
+
+#### PUT `/api/v1/area-company/{id}` — Update
+
+**Request** (`UpdateAreaCompanyRequest`): Same structure as Create.
+
+#### GET `/api/v1/area-company` — List all
+
+#### GET `/api/v1/area-company/{id}` — Get by ID
+
+#### DELETE `/api/v1/area-company/{id}` — Delete (204 No Content)
+
+#### POST `/api/v1/area-company/{areaCompanyId}/unitsOfWork` — Add UnitOfWork
+
+**Request** (`AddUnitOfWorkToAreaCompanyRequest`):
+```json
+{
+  "unit_of_work_id": 1
+}
+```
+
+---
+
+### 4.3 Dashboards — `/api/v1/dashboards`
+
+#### POST `/api/v1/dashboards` — Create dashboard
+
+**Request** (`CreateDashboardRequest`):
+```json
+{
+  "title": "Main Dashboard",
+  "description": "Overview of metrics",
+  "ruc": "20123456789"
+}
+```
+
+> **Note**: Create does NOT accept `company_id`. Only Update does.
+
+**Response 201** (`DashboardResponse`):
+```json
+{
+  "dashboard_id": 1,
+  "title": "Main Dashboard",
+  "description": "Overview of metrics",
+  "ruc": "20123456789",
+  "company_id": 1,
+  "widgets": []
+}
+```
+
+#### PUT `/api/v1/dashboards/{id}` — Update
+
+**Request** (`UpdateDashboardRequest`):
+```json
+{
+  "title": "Updated Dashboard",
+  "description": "New description",
+  "ruc": "20123456789",
+  "company_id": 1
+}
+```
+
+#### GET `/api/v1/dashboards` — List all
+
+#### GET `/api/v1/dashboards/{id}` — Get by ID
+
+#### DELETE `/api/v1/dashboards/{id}` — Delete (204 No Content)
+
+#### GET `/api/v1/dashboards/company/{companyId}` — By company
+
+**Response 200**: `DashboardResponse[]` | **404** if none found.
+
+#### POST `/api/v1/dashboards/{dashboardId}/widgets` — Add widget
+
+**Request** (`AddWidgetToDashboardRequest`):
+```json
+{
+  "widget_id": 1
+}
+```
+
+---
+
+### 4.4 Widgets — `/api/v1/widgets`
+
+#### POST `/api/v1/widgets` — Create widget
+
+**Request** (`CreateWidgetRequest`):
+```json
+{
+  "title": "Monthly Productivity",
+  "refresh_period": 60,
+  "dashboard_id": 1
+}
+```
+
+**Response 201** (`WidgetResponse`):
+```json
+{
+  "widget_id": 1,
+  "title": "Monthly Productivity",
+  "refresh_period": 60,
+  "dashboard_id": 1
+}
+```
+
+#### PUT `/api/v1/widgets/{id}` — Update
+
+#### GET `/api/v1/widgets` — List all
+
+#### GET `/api/v1/widgets/{id}` — Get by ID
+
+#### DELETE `/api/v1/widgets/{id}` — Delete (204 No Content)
+
+---
+
+### 4.5 Unit of Work — `/api/v1/unit-of-work`
+
+> Note: the route is **singular** `/unit-of-work`, not `/unit-of-works`.
+
+#### POST `/api/v1/unit-of-work` — Create
+
+**Request** (`CreateUnitOfWorkRequest`):
+```json
+{
+  "name": "Sprint 1"
+}
+```
+
+**Response 201** (`UnitOfWorkResponse`):
+```json
+{
+  "unit_of_work_id": 1,
+  "name": "Sprint 1",
+  "work_team_list": []
+}
+```
+
+#### PUT `/api/v1/unit-of-work/{id}` — Update
+
+#### GET `/api/v1/unit-of-work` — List all
+
+#### GET `/api/v1/unit-of-work/{id}` — Get by ID
+
+#### DELETE `/api/v1/unit-of-work/{id}` — Delete (204 No Content)
+
+#### POST `/api/v1/unit-of-work/{uniOfWorkId}/work-teams` — Add team
+
+**Request** (`AddWorkTeamToUnitOFWorkRequest`):
+```json
+{
+  "work_team_id": 1
+}
+```
+
+---
+
+### 4.6 Work Teams — `/api/v1/work-teams`
+
+#### POST `/api/v1/work-teams` — Create team
+
+**Request** (`CreateWorkTeamRequest`):
+```json
+{
+  "team_name": "Team Alpha",
+  "leader_of_team": "Carlos Mendoza",
+  "unit_of_work_id": 1
+}
+```
+
+**Response 201** (`WorkTeamResponse`):
+```json
+{
+  "work_team_id": 1,
+  "team_name": "Team Alpha",
+  "leader_of_team": "Carlos Mendoza",
+  "unit_of_work_id": 1
+}
+```
+
+#### PUT `/api/v1/work-teams/{id}` — Update
+
+#### GET `/api/v1/work-teams` — List all
+
+#### GET `/api/v1/work-teams/{id}` — Get by ID
+
+#### DELETE `/api/v1/work-teams/{id}` — Delete (204 No Content)
+
+---
+
+## 5. Bounded Context: Feedback
+
+> Package: `pe.edu.upc.soft.work.platform.feedback`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 5.1 Surveys — `/api/v1/surveys`
+
+#### POST `/api/v1/surveys` — Create survey
+
+**Request** (`CreateSurveyRequest`):
+```json
+{
+  "title": "Workplace Climate Survey",
+  "description": "Quarterly assessment",
+  "target_type": "ALL_EMPLOYEES",
+  "expiration_time": "2026-12-31"
+}
+```
+
+> **FIXED**: previously the request key was `expirationType` (a copy-paste bug in an `@JsonProperty`)
+> while the field is `expirationTime`. Now request and response both use `expiration_time`.
+
+**Response 200** (`SurveyResponse`):
+```json
+{
+  "survey_id": 1,
+  "title": "Workplace Climate Survey",
+  "description": "Quarterly assessment",
+  "target_type": "ALL_EMPLOYEES",
+  "expiration_time": "2026-12-31"
+}
+```
+
+#### PUT `/api/v1/surveys/{id}` — Update
+
+#### GET `/api/v1/surveys` — List all
+
+#### GET `/api/v1/surveys/{id}` — Get by ID
+
+#### DELETE `/api/v1/surveys/{id}` — Delete
+
+---
+
+### 5.2 Survey Responses — `/api/v1/survey-responses`
+
+#### POST `/api/v1/survey-responses` — Create response
+
+**Request** (`CreateSurveyResponseRequest`):
+```json
+{
+  "survey_id": 1,
+  "employee_profile_id": 3,
+  "submitted_at": "2026-06-19",
+  "commentary": "Good work environment",
+  "cause": "Teamwork"
+}
+```
+
+**Response 201** (`SurveyResponseResponse`):
+```json
+{
+  "survey_response_id": 1,
+  "survey_id": 1,
+  "employee_profile_id": 3,
+  "submitted_at": "2026-06-19",
+  "commentary": "Good work environment",
+  "cause": "Teamwork"
+}
+```
+
+#### PUT `/api/v1/survey-responses/{id}` — Update
+
+#### GET `/api/v1/survey-responses` — List
+
+#### GET `/api/v1/survey-responses/{id}` — Get by ID
+
+#### DELETE `/api/v1/survey-responses/{id}` — Delete
+
+---
+
+### 5.3 Question Surveys — `/api/v1/question-surveys`
+
+#### POST `/api/v1/question-surveys` — Create question
+
+**Request** (`CreateQuestionSurveyRequest`):
+```json
+{
+  "text_question": "How would you rate the work environment?",
+  "question_type": "SCALE",
+  "survey_id": 1
+}
+```
+
+**Response 201** (`QuestionSurveyResponse`):
+```json
+{
+  "question_survey_id": 1,
+  "text_question": "How would you rate the work environment?",
+  "question_type": "SCALE",
+  "survey_id": 1
+}
+```
+
+#### PUT `/api/v1/question-surveys/{id}` — Update
+
+#### GET `/api/v1/question-surveys` — List
+
+#### GET `/api/v1/question-surveys/{id}` — Get by ID
+
+#### DELETE `/api/v1/question-surveys/{id}` — Delete
+
+---
+
+### 5.4 Answers — `/api/v1/answers`
+
+#### POST `/api/v1/answers` — Create answer
+
+**Request** (`CreateAnswerRequest`):
+```json
+{
+  "value": 5,
+  "score_answer": 10
+}
+```
+
+**Response 201** (`AnswerResponse`):
+```json
+{
+  "id": 1,
+  "value": 5,
+  "score_answer": 10
+}
+```
+
+> Note: here the ID field is called `id`, not `answer_id`.
+
+#### PUT `/api/v1/answers/{id}` — Update
+
+#### GET `/api/v1/answers` — List
+
+#### GET `/api/v1/answers/{id}` — Get by ID
+
+#### DELETE `/api/v1/answers/{id}` — Delete
+
+---
+
+### 5.5 Feedback Assistant (AI) — `/api/v1/feedback-assistant`
+
+> Endpoint powered by Google Gemini (`gemini-2.5-flash`). See the full technical details
+> of this integration in [section 11.3](#113-google-gemini--spring-ai-feedback-assistant).
+
+#### POST `/api/v1/feedback-assistant` — Ask the assistant
+
+**CORS**: only `POST` is enabled (unlike other controllers which allow GET/POST/PUT/DELETE).
+
+**Request** (`AskAssistantRequest`):
+```json
+{
+  "survey_id": 1,
+  "prompt": "Help me draft 3 questions about workplace climate"
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `survey_id` | `surveyId` | Long | Optional (nullable) | If provided, the assistant appends context from that survey (title + description) to the prompt |
+| `prompt` | `prompt` | String | Must not be null/blank | Validated in the **record** constructor of `AskFeedbackAssistantCommand`, not via Jakarta annotations |
+
+**Response 200** (`AssistantAnswerResponse`):
+```json
+{
+  "content_answer": "Here are 3 suggested questions:\n1. ...\n2. ...\n3. ..."
+}
+```
+
+| JSON Key | Java Field | Notes |
+|---|---|---|
+| `content_answer` | `contentAnswer` | text generated by Gemini, always in Spanish (per system prompt) |
+
+**Errors**:
+- `400 Bad Request` (`IllegalArgumentException` → `BadRequestResponse`): if `prompt` is null or blank → message `"Prompt must not be empty."`
+- `500 Internal Server Error`: if the AI model call fails → message `"Error generating assistant response: {detail}"`
+
+---
+
+## 6. Bounded Context: Payment Service
+
+> Package: `pe.edu.upc.soft.work.platform.payment.service`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 6.1 Memberships — `/api/v1/memberships`
+
+#### POST `/api/v1/memberships` — Create membership
+
+**Request** (`CreateMembershipRequest`):
+```json
+{
+  "membership_start": "2026-01-01",
+  "membership_over": "2026-12-31",
+  "membership_status": "ACTIVE"
+}
+```
+
+**Response 201** (`MembershipResponse`):
+```json
+{
+  "membership_id": 1,
+  "membership_start": "2026-01-01",
+  "membership_over": "2026-12-31",
+  "membership_status": "ACTIVE"
+}
+```
+
+#### PUT `/api/v1/memberships/{id}` — Update
+
+#### GET `/api/v1/memberships` — List
+
+#### GET `/api/v1/memberships/{id}` — Get by ID
+
+#### DELETE `/api/v1/memberships/{id}` — Delete
+
+---
+
+### 6.2 Orders — `/api/v1/orders`
+
+#### POST `/api/v1/orders` — Create order
+
+**Request** (`CreateOrderRequest`):
+```json
+{
+  "user_account_id": 1,
+  "amount": 99,
+  "membership_id": 1
+}
+```
+
+**Business validations** (in `OrderCommandServiceImpl`):
+1. `user_account_id` must exist → `404 NotFoundArgumentException`
+2. `membership_id` must exist → `404 NotFoundArgumentException`
+3. Membership status must be `ACTIVE` → `500 IllegalStateException`
+4. Current date must be within the membership's date range → `500 IllegalStateException`
+
+**Response 201** (`OrderResponse`):
+```json
+{
+  "order_id": 1,
+  "user_account_id": 1,
+  "amount": 99,
+  "membership_id": 1
+}
+```
+
+#### PUT `/api/v1/orders/{id}` — Update
+
+#### GET `/api/v1/orders` — List
+
+#### GET `/api/v1/orders/{id}` — Get by ID
+
+#### DELETE `/api/v1/orders/{id}` — Delete
+
+#### GET `/api/v1/orders/userAccount/{userAccountId}` — By user account
+
+**Response 200**: `OrderResponse[]`
+
+---
+
+### 6.3 Payments — `/api/v1/payments`
+
+#### POST `/api/v1/payments` — Register payment (manual)
+
+**Request** (`CreatePaymentRequest`):
+```json
+{
+  "order_id": 1,
+  "transaction_id": "TXN-2026-001",
+  "payment_date": "2026-06-19"
+}
+```
+
+**Response 201** (`PaymentResponse`):
+```json
+{
+  "payment_id": 1,
+  "order_id": 1,
+  "transaction_id": "TXN-2026-001",
+  "payment_date": "2026-06-19"
+}
+```
+
+#### PUT `/api/v1/payments/{id}` — Update
+
+#### GET `/api/v1/payments` — List
+
+#### GET `/api/v1/payments/{id}` — Get by ID
+
+#### DELETE `/api/v1/payments/{id}` — Delete
+
+> In addition to this manual CRUD, there are dedicated endpoints for the real Stripe
+> payment flow under `/api/v1/payments/stripe/**`. See [section 11.2](#112-stripe--online-payments)
+> for the full detail (checkout, retry, refund, webhook).
+
+---
+
+### 6.4 Membership Plans — `/api/v1/membership-plans`
+
+#### POST `/api/v1/membership-plans` — Create plan
+
+**Request** (`CreateMembershipPlanRequest`):
+```json
+{
+  "plan_name": "Professional",
+  "price": 99,
+  "membership_id": 1
+}
+```
+
+**Response 201** (`MembershipPlanResponse`):
+```json
+{
+  "plan_id": 1,
+  "plan_name": "Professional",
+  "price": 99,
+  "membership_id": 1,
+  "benefit_response_list": []
+}
+```
+
+#### PUT `/api/v1/membership-plans/{id}` — Update
+
+#### GET `/api/v1/membership-plans` — List
+
+#### GET `/api/v1/membership-plans/{id}` — Get by ID
+
+#### DELETE `/api/v1/membership-plans/{id}` — Delete
+
+#### POST `/api/v1/membership-plans/{membershipPlanId}/benefits` — Add benefit
+
+**Request** (`AddBenefitToMembershipPlanRequest`):
+```json
+{
+  "benefit_id": 1
+}
+```
+
+---
+
+### 6.5 Benefits — `/api/v1/benefits`
+
+#### POST `/api/v1/benefits` — Create benefit
+
+**Request** (`CreateBenefitRequest`):
+```json
+{
+  "title": "Forum Access",
+  "description": "Full access to the workers' forum",
+  "membership_plan_id": 1
+}
+```
+
+**Response 201** (`BenefitResponse`):
+```json
+{
+  "benefit_id": 1,
+  "title": "Forum Access",
+  "description": "Full access to the workers' forum",
+  "membership_plan_id": 1
+}
+```
+
+#### PUT `/api/v1/benefits/{id}` — Update
+
+#### GET `/api/v1/benefits` — List
+
+#### GET `/api/v1/benefits/{id}` — Get by ID
+
+#### DELETE `/api/v1/benefits/{id}` — Delete
+
+---
+
+## 7. Bounded Context: Notification
+
+> Package: `pe.edu.upc.soft.work.platform.notification`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 7.1 Notifications — `/api/v1/notifications`
+
+#### POST `/api/v1/notifications` — Create notification
+
+**Request** (`CreateNotificationRequest`):
+```json
+{
+  "seen": false,
+  "notification_type": "ALERT",
+  "user_account_id": 1
+}
+```
+
+**Response 201** (`NotificationResponse`):
+```json
+{
+  "notification_id": 1,
+  "seen": false,
+  "notification_type": "ALERT",
+  "user_account_id": 1
+}
+```
+
+#### PUT `/api/v1/notifications/{id}` — Update
+
+#### GET `/api/v1/notifications` — List
+
+#### GET `/api/v1/notifications/{id}` — Get by ID
+
+#### DELETE `/api/v1/notifications/{id}` — Delete
+
+---
+
+### 7.2 Notification Details — `/api/v1/notification-details`
+
+#### POST `/api/v1/notification-details` — Create detail
+
+**Request** (`CreateNotificationDetailRequest`):
+```json
+{
+  "title": "New message",
+  "content": "You have a new message in the forum",
+  "notification_id": 1
+}
+```
+
+**Response 201** (`NotificationDetailResponse`):
+```json
+{
+  "notification_detail_id": 1,
+  "title": "New message",
+  "content": "You have a new message in the forum",
+  "notification_id": 1
+}
+```
+
+#### PUT `/api/v1/notification-details/{id}` — Update
+
+#### GET `/api/v1/notification-details` — List
+
+#### GET `/api/v1/notification-details/{id}` — Get by ID
+
+#### DELETE `/api/v1/notification-details/{id}` — Delete
+
+---
+
+## 8. Bounded Context: Worker Forum
+
+> Package: `pe.edu.upc.soft.work.platform.worker.forum`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 8.1 Forums — `/api/v1/forums`
+
+#### POST `/api/v1/forums` — Create forum
+
+**Request** (`CreateForumRequest`):
+```json
+{
+  "title": "General Forum",
+  "description": "Open discussion space",
+  "company_id": 1
+}
+```
+
+**Response 201** (`ForumResponse`):
+```json
+{
+  "forum_id": 1,
+  "title": "General Forum",
+  "description": "Open discussion space",
+  "company_id": 1,
+  "categories": []
+}
+```
+
+#### PUT `/api/v1/forums/{id}` — Update
+
+#### GET `/api/v1/forums` — List
+
+#### GET `/api/v1/forums/{id}` — Get by ID
+
+#### DELETE `/api/v1/forums/{id}` — Delete
+
+#### POST `/api/v1/forums/{forumId}/categories` — Add category
+
+**Request** (`AddCategoryToForumRequest`):
+```json
+{
+  "category_id": 1
+}
+```
+
+---
+
+### 8.2 Categories — `/api/v1/categories`
+
+#### POST `/api/v1/categories` — Create category
+
+**Request** (`CreateCategoryRequest`):
+```json
+{
+  "title": "Announcements",
+  "description": "Category for official announcements",
+  "forum_id": 1
+}
+```
+
+**Response 201** (`CategoryResponse`):
+```json
+{
+  "category_id": 1,
+  "title": "Announcements",
+  "description": "Category for official announcements",
+  "forum_id": 1,
+  "threads": []
+}
+```
+
+#### PUT `/api/v1/categories/{id}` — Update
+
+#### GET `/api/v1/categories` — List
+
+#### GET `/api/v1/categories/{id}` — Get by ID
+
+#### DELETE `/api/v1/categories/{id}` — Delete
+
+#### POST `/api/v1/categories/{categoryId}/threads` — Add thread
+
+**Request** (`AddThreadToCategoryRequest`):
+```json
+{
+  "thread_id": 1
+}
+```
+
+---
+
+### 8.3 Threads — `/api/v1/threads`
+
+#### POST `/api/v1/threads` — Create thread
+
+**Request** (`CreateThreadRequest`):
+```json
+{
+  "title": "Sprint discussion",
+  "area_company_id": 1,
+  "last_message": "2026-06-19",
+  "category_id": 1,
+  "message_count": 0
+}
+```
+
+**Response 201** (`ThreadResponse`):
+```json
+{
+  "thread_id": 1,
+  "title": "Sprint discussion",
+  "area_company_id": 1,
+  "last_message": "2026-06-19",
+  "category_id": 1,
+  "message_count": 0,
+  "message_responses": []
+}
+```
+
+#### PUT `/api/v1/threads/{id}` — Update
+
+#### GET `/api/v1/threads` — List
+
+#### GET `/api/v1/threads/{id}` — Get by ID
+
+#### DELETE `/api/v1/threads/{id}` — Delete
+
+#### POST `/api/v1/threads/{threadId}/messages` — Add message
+
+**Request** (`AddMessageToThreadRequest`):
+```json
+{
+  "message_id": 1
+}
+```
+
+---
+
+### 8.4 Messages — `/api/v1/messages`
+
+#### POST `/api/v1/messages` — Create message
+
+**Request** (`CreateMessageRequest`):
+```json
+{
+  "user_account_id": 1,
+  "content_message": "Hi team, we have a meeting tomorrow",
+  "thread_id": 1
+}
+```
+
+**Response 201** (`MessageResponse`):
+```json
+{
+  "message_id": 1,
+  "user_account_id": 1,
+  "content_message": "Hi team, we have a meeting tomorrow",
+  "thread_id": 1,
+  "attachments": []
+}
+```
+
+#### PUT `/api/v1/messages/{id}` — Update
+
+#### GET `/api/v1/messages` — List
+
+#### GET `/api/v1/messages/{id}` — Get by ID
+
+#### DELETE `/api/v1/messages/{id}` — Delete
+
+#### POST `/api/v1/messages/{messageId}/assets` — Add asset
+
+**Request** (`AddAssetToMessageRequest`):
+```json
+{
+  "asset_id": 1
+}
+```
+
+---
+
+### 8.5 Assets — `/api/v1/assets`
+
+> **Note**: Unlike the other CRUD endpoints in the backend, Asset creation does **not** use
+> JSON — it uses `multipart/form-data` because the actual file is uploaded to **Cloudinary**.
+> See the technical detail of the upload flow in [section 11.1](#111-cloudinary--file-storage).
+
+#### POST `/api/v1/assets` — Upload file and create asset
+
+**Content-Type**: `multipart/form-data` (`consumes = MULTIPART_FORM_DATA_VALUE`)
+
+**Request** — Form fields (`@RequestParam`, NOT a JSON body):
+
+| Parameter (form field) | Type | Required | Description |
+|---|---|---|---|
+| `messageId` | Long | Yes | ID of the message this asset is attached to |
+| `name` | String | Yes | File name |
+| `fileType` | Enum `FileType` | Yes | One of: `VIDEO`, `JPEG`, `PDF` |
+| `file` | Binary (MultipartFile) | Yes | Binary content of the file |
+
+> **Note**: form-field (`@RequestParam`) names are **not** affected by Jackson's `@JsonNaming`
+> (that strategy only applies to JSON bodies). The multipart field names remain `messageId`,
+> `name`, `fileType`, `file` exactly as declared in the controller.
+
+**Example (curl)**:
+```bash
+curl -X POST http://localhost:8092/api/v1/assets \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "messageId=123" \
+  -F "name=document.pdf" \
+  -F "fileType=PDF" \
+  -F "file=@/local/path/document.pdf"
+```
+
+> **IMPORTANT**: `url` and `fileSize` are **not** sent in the request — the backend computes them
+> automatically after uploading the file to Cloudinary (public URL returned by Cloudinary, file
+> size detected from the binary).
+
+**Response 201** (`AssetResponse`) — JSON body, so snake_case applies:
+```json
+{
+  "asset_id": 1,
+  "message_id": 123,
+  "name": "document.pdf",
+  "url": "https://res.cloudinary.com/<cloud_name>/image/upload/v.../workersforum/pdfs/<public_id>.pdf",
+  "file_size": "2.5MB",
+  "file_type": "PDF"
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `asset_id` | `assetId` | Long | |
+| `message_id` | `messageId` | Long | |
+| `name` | `name` | String | |
+| `url` | `url` | String | Public Cloudinary URL, generated by the backend |
+| `file_size` | `fileSize` | String | generated by the backend |
+| `file_type` | `fileType` | String (Enum) | `VIDEO` \| `JPEG` \| `PDF` |
+
+**Errors**:
+- `400 Bad Request`: invalid `fileType` or missing file
+- `404 Not Found`: `messageId` does not exist
+- `500 Internal Server Error` (Cloudinary): `"[CloudinaryStorageServiceImpl] Error al subir el archivo a Cloudinary: {detail}"`. If Asset creation fails **after** a successful Cloudinary upload, the backend deletes the just-uploaded file to avoid orphaned files (`storageService.delete(url)`).
+
+#### PUT `/api/v1/assets/{id}` — Update metadata (JSON, not multipart)
+
+**Request** (`UpdateAssetRequest`):
+```json
+{
+  "message_id": 124,
+  "name": "renamed-document.pdf",
+  "url": "https://res.cloudinary.com/.../document.pdf",
+  "file_size": "2.5MB"
+}
+```
+
+> Note: Update **is** a normal JSON request (so snake_case applies) and does **not** allow changing
+> `file_type` (the file type is immutable after creation).
+
+#### GET `/api/v1/assets` — List all
+
+#### GET `/api/v1/assets/{id}` — Get by ID
+
+#### DELETE `/api/v1/assets/{id}` — Delete
+
+> When deleting the Asset record, note that the physical file in Cloudinary may require separate
+> cleanup depending on the `AssetCommandService` implementation.
+
+---
+
+### 8.6 Reports — `/api/v1/reports`
+
+#### POST `/api/v1/reports` — Create report
+
+**Request** (`CreateReportRequest`):
+```json
+{
+  "reason": "Inappropriate content",
+  "description": "The message contains offensive language",
+  "user_account_id": 1,
+  "report_date": "2026-06-19",
+  "area_company_id": 1
+}
+```
+
+**Response 201** (`ReportResponse`):
+```json
+{
+  "report_id": 1,
+  "reason": "Inappropriate content",
+  "description": "The message contains offensive language",
+  "user_account_id": 1,
+  "report_date": "2026-06-19",
+  "area_company_id": 1
+}
+```
+
+#### PUT `/api/v1/reports/{id}` — Update
+
+#### GET `/api/v1/reports` — List
+
+#### GET `/api/v1/reports/{id}` — Get by ID
+
+#### DELETE `/api/v1/reports/{id}` — Delete
+
+---
+
+## 9. Bounded Context: Profile Performance
+
+> Package: `pe.edu.upc.soft.work.platform.profile.performance`
+> All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+
+---
+
+### 9.1 Performances — `/api/v1/performances`
+
+#### POST `/api/v1/performances` — Create performance evaluation
+
+**Request** (`CreatePerformanceRequest`):
+```json
+{
+  "employee_profile_id": 1,
+  "date_time": "2026-06-19",
+  "classification": 5
+}
+```
+
+**Response 201** (`PerformanceResponse`):
+```json
+{
+  "performance_id": 1,
+  "employee_profile_id": 1,
+  "date_time": "2026-06-19",
+  "classification": 5,
+  "comment_employees": []
+}
+```
+
+#### PUT `/api/v1/performances/{id}` — Update
+
+#### GET `/api/v1/performances` — List
+
+#### GET `/api/v1/performances/{id}` — Get by ID
+
+#### DELETE `/api/v1/performances/{id}` — Delete
+
+#### POST `/api/v1/performances/{performanceId}/comment-employees` — Add comment
+
+**Request** (`AddCommentEmployeeToPerformanceRequest`):
+```json
+{
+  "comment_id": 1
+}
+```
+
+---
+
+### 9.2 Comment Employees — `/api/v1/comment-employees`
+
+#### POST `/api/v1/comment-employees` — Create comment
+
+**Request** (`CreateCommentEmployeeRequest`):
+```json
+{
+  "title": "Good performance",
+  "content": "The employee has exceeded expectations this quarter",
+  "rrhh_profile_id": 1,
+  "performance_id": 1
+}
+```
+
+**Response 201** (`CommentEmployeeResponse`):
+```json
+{
+  "comment_employee_id": 1,
+  "title": "Good performance",
+  "content": "The employee has exceeded expectations this quarter",
+  "rrhh_profile_id": 1,
+  "performance_id": 1
+}
+```
+
+#### PUT `/api/v1/comment-employees/{id}` — Update
+
+#### GET `/api/v1/comment-employees` — List
+
+#### GET `/api/v1/comment-employees/{id}` — Get by ID
+
+#### DELETE `/api/v1/comment-employees/{id}` — Delete
+
+---
+
+## 10. Error Handling
+
+### Standardized Error Responses
+
+The `GlobalExceptionHandler` (`@RestControllerAdvice`) catches exceptions and returns snake_case
+JSON. The error response records (`BadRequestResponse`, `NotFoundResponse`,
+`InternalServerErrorResponse`, `ServiceUnavailableResponse`) are annotated with
+`@JsonNaming(SnakeCaseStrategy)`, so envelope fields serialize as snake_case (`field_errors`).
+
+> **UPDATE (2026-07-03)**: The dynamic keys inside `field_errors` are also snake_cased now. The
+> handler translates each `MethodArgumentNotValidException` field name via Jackson's actual
+> `PropertyNamingStrategies.SNAKE_CASE` before putting it in the map, so error keys match the DTO
+> field names exactly (e.g. a validation failure on `annualBudget` reports `annual_budget`).
+
+#### 400 Bad Request — Field validation (`BadRequestResponse`)
+
+```json
+{
+  "status": 400,
+  "error": "Bad Request",
+  "message": "JSON validation failed",
+  "field_errors": {
+    "name": "must not be blank",
+    "dni": "must not be blank"
+  }
+}
+```
+
+> Triggered by `MethodArgumentNotValidException` (failure of `@NotNull`/`@NotBlank` on the DTO).
+> The keys inside `field_errors` are the snake_case field names (e.g. `last_name`, `user_account_id`).
+
+#### 400 Bad Request — Internal business validation (`BadRequestResponse`)
+
+```json
+{
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Internal validation failed",
+  "field_errors": {
+    "argument": "Prompt must not be empty."
+  }
+}
+```
+
+> Triggered by `IllegalArgumentException` (e.g. empty prompt in the Feedback Assistant). The
+> `argument` key is a fixed literal (already lowercase, unaffected by the strategy).
+
+#### 404 Not Found — Resource does not exist (`NotFoundResponse`)
+
+```json
+{
+  "status": 404,
+  "error": "NOT_FOUND",
+  "message": "User Account not found"
+}
+```
+
+> Triggered by `NotFoundIdException` or `NotFoundArgumentException`.
+
+#### 500 Internal Server Error (`InternalServerErrorResponse`)
+
+```json
+{
+  "status": 500,
+  "error": "Internal Server Error",
+  "message": "User with DNI 12345678 already exists."
+}
+```
+
+> Triggered by `NullPointerException` or an uncaught `RuntimeException` (duplicate DNI,
+> Stripe/Cloudinary/Gemini errors wrapped as `RuntimeException`, etc).
+
+#### 503 Service Unavailable — DB down (`ServiceUnavailableResponse`)
+
+```json
+{
+  "status": 503,
+  "error": "Service Unavailable",
+  "message": "could not execute statement..."
+}
+```
+
+> Triggered by `PersistenceException` (JPA/Hibernate).
+
+### Exception Table
+
+| Java Exception | HTTP Status | When it Occurs |
+|---|---|---|
+| `MethodArgumentNotValidException` | 400 | @NotNull/@NotBlank fails on the DTO |
+| `IllegalArgumentException` | 400 | Internal business validation (e.g. empty AI assistant prompt) |
+| `NotFoundIdException` | 404 | `findById` does not find the entity |
+| `NotFoundArgumentException` | 404 | An argument references a non-existent entity (e.g. Order → UserAccount) |
+| `PersistenceException` | 503 | Database error |
+| `NullPointerException` | 500 | Unexpected internal error |
+| `RuntimeException` (generic) | 500 | Duplicate DNI, Cloudinary/Stripe/Gemini failures, uncaught errors |
+| `IllegalStateException` | 500 | Inactive/out-of-range membership, Payment in invalid state for retry/refund |
+| `StripeException` (wrapped) | 500 | Stripe API error (wrapped as `RuntimeException`) |
+| `SignatureVerificationException` (Stripe) | 400 | Invalid webhook signature — **handled directly in the controller**, does not go through `GlobalExceptionHandler` |
+| `IOException` (Cloudinary, wrapped) | 500 | Failure uploading/deleting a file in Cloudinary |
+
+---
+
+## 11. External Services: Cloudinary, Stripe, Google Gemini
+
+> This section documents the external service integrations added to the backend (visible
+> in `application-prod.properties`). These integrations **do not replace** the traditional CRUD
+> documented in the previous sections — they complement it with real flows for file uploads,
+> payment processing, and AI assistance.
+
+### New Dependencies (pom.xml)
+
+| Library | Artifact | Version | Purpose |
+|---|---|---|---|
+| Cloudinary | `com.cloudinary:cloudinary-http5` | `2.0.0` | HTTP client for uploading/deleting files |
+| Cloudinary | `com.cloudinary:cloudinary-taglib` | `2.0.0` | Additional Cloudinary utilities |
+| Stripe | `com.stripe:stripe-java` | `26.3.0` | Official Stripe SDK for Java |
+| Spring AI | `org.springframework.ai:spring-ai-starter-model-google-genai` | BOM `2.0.0` | Integration with Gemini models via Spring AI |
+
+---
+
+### 11.1 Cloudinary — File Storage
+
+**Configuration** (`CloudinaryConfig.java`):
+```java
+@Configuration
+public class CloudinaryConfig {
+  @Value("${CLOUDINARY_URL}")
+  private String cloudinaryUrl;
+
+  @Bean
+  public Cloudinary cloudinary() {
+    return new Cloudinary(cloudinaryUrl);
+  }
+}
+```
+
+- **Environment variable**: `CLOUDINARY_URL` (format `cloudinary://<api_key>:<api_secret>@<cloud_name>`)
+- **Upload limits** (`application-prod.properties`):
+  ```properties
+  spring.servlet.multipart.max-file-size=100MB
+  spring.servlet.multipart.max-request-size=100MB
+  ```
+  Files exceeding these limits receive a `413 Payload Too Large` at the Spring level, before ever
+  reaching the controller.
+
+**Folder organization in Cloudinary** (based on `FileType`):
+
+| `FileType` | Cloudinary Folder |
+|---|---|
+| `VIDEO` | `workersforum/videos` |
+| `JPEG` | `workersforum/images` |
+| `PDF` | `workersforum/pdfs` |
+
+**Endpoint used**: `POST /api/v1/assets` — see full detail in [section 8.5](#85-assets--apiv1assets).
+
+**Cloudinary-specific error handling**:
+```java
+// Upload failure
+catch (IOException e) {
+    throw new RuntimeException(
+        "[CloudinaryStorageServiceImpl] Error al subir el archivo a Cloudinary: " + e.getMessage(), e);
+}
+
+// Delete failure
+catch (IOException e) {
+    throw new RuntimeException(
+        "[CloudinaryStorageServiceImpl] Error al eliminar el archivo de Cloudinary: " + e.getMessage(), e);
+}
+```
+
+If Asset creation in the database fails **after** a successful upload to Cloudinary, the backend
+automatically runs `storageService.delete(url)` to avoid leaving orphaned files in Cloudinary.
+
+---
+
+### 11.2 Stripe — Online Payments
+
+**Configuration** (`StripeProperties.java`):
+```java
+@Component
+@ConfigurationProperties(prefix = "stripe")
+public class StripeProperties {
+    private String secretKey;
+    private String webhookSecret;
+}
+```
+
+- `stripe.secret-key` ← `STRIPE_SECRET_KEY` (`sk_...`)
+- `stripe.webhook-secret` ← `STRIPE_WEBHOOK_SECRET` (`whsec_...`)
+- The API key is initialized via `@PostConstruct` inside `StripePaymentGatewayAdapter`:
+  ```java
+  @PostConstruct
+  public void initStripe() {
+      Stripe.apiKey = stripeProperties.getSecretKey();
+  }
+  ```
+
+**Controller**: `StripePaymentController`
+**Base route**: `/api/v1/payments/stripe`
+**CORS**: only `GET, POST` enabled (`@CrossOrigin(methods = {RequestMethod.POST, RequestMethod.GET})`)
+
+---
+
+#### POST `/api/v1/payments/stripe/checkout` — Create PaymentIntent
+
+Creates a Stripe `PaymentIntent` for an existing `Order` and returns the `client_secret` that the
+frontend uses with Stripe.js/Stripe Elements to confirm the payment.
+
+**Request** (`CreateStripeCheckoutRequest`):
+```json
+{
+  "order_id": 42,
+  "currency": "usd"
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `order_id` | `orderId` | Long | @NotNull | The Order must exist |
+| `currency` | `currency` | String | Optional | ISO 4217 code, lowercased before sending to Stripe; if null/blank, the adapter defaults to `"usd"` |
+
+**Response 200** (`StripeCheckoutResponse`):
+```json
+{
+  "client_secret": "pi_3ABC123_secret_XYZ789"
+}
+```
+
+**Internal details of the Stripe PaymentIntent created**:
+- `amount`: `order.getAmount() * 100` (Stripe uses the smallest currency unit, e.g. cents)
+- `currency`: lowercased, defaults to `"usd"`
+- `automaticPaymentMethods`: enabled
+- `metadata`: `{ "orderId": <id>, "membershipId": <id> }` — Stripe metadata keys are set literally in
+  Java code and are **not** transformed by `@JsonNaming` (they are not DTO fields)
+
+**Errors**:
+- `400 Bad Request`: Order not found or invalid request
+- `500 Internal Server Error`: `"[StripePaymentGatewayAdapter] Failed to create Stripe PaymentIntent: {detail}"` (wraps `StripeException`)
+
+---
+
+#### POST `/api/v1/payments/stripe/{paymentId}/retry` — Retry failed payment
+
+Creates a **new** `PaymentIntent` to retry a payment that previously failed.
+
+**Path param**: `paymentId` (Long)
+
+**Request** (`RetryPaymentRequest`):
+```json
+{
+  "order_id": 42,
+  "currency": "usd"
+}
+```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `order_id` | `orderId` | Long | @NotNull |
+| `currency` | `currency` | String | @NotNull (unlike checkout, here it is mandatory) |
+
+**Business validation**: the `Payment` referenced by `paymentId` must exist and be in **`FAILED`**
+status (`payment.isFailed()`). Otherwise it is rejected with:
+```
+Cannot retry Payment in status: {status}. Only FAILED payments can be retried.
+```
+
+**Response 200** (`PaymentRetryResponse`):
+```json
+{
+  "payment_id": 5,
+  "client_secret": "pi_3XYZ456_secret_ABC123",
+  "new_transaction_id": "pi_3XYZ456"
+}
+```
+
+| JSON Key | Java Field | Notes |
+|---|---|---|
+| `payment_id` | `paymentId` | The same original Payment (ID does not change) |
+| `client_secret` | `clientSecret` | New Stripe secret to confirm the payment from the frontend |
+| `new_transaction_id` | `newTransactionId` | New Stripe PaymentIntent ID — replaces the previous `transaction_id` on the Payment |
+
+**Side effects**: the original `Payment` is updated with the new `transactionId` and its status is
+reset to `PENDING`. A `PaymentRetryInitiatedEvent` is published.
+
+**Errors**:
+- `400 Bad Request`: invalid request, Payment not found, or Payment is not in FAILED state
+- `500 Internal Server Error`: Stripe API error
+
+---
+
+#### POST `/api/v1/payments/stripe/{paymentId}/refund` — Initiate refund
+
+**Path param**: `paymentId` (Long)
+
+**Request** (`InitiateRefundRequest`):
+```json
+{
+  "order_id": 42,
+  "reason": "requested_by_customer",
+  "refund_amount_cents": 5000
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `order_id` | `orderId` | Long | @NotNull | |
+| `reason` | `reason` | String | @NotNull | Must map to a value of Stripe's `RefundCreateParams.Reason` enum (e.g. `requested_by_customer`, `duplicate`, `fraudulent`) |
+| `refund_amount_cents` | `refundAmountCents` | Integer | @NotNull | **typo fixed**: the JSON key was previously `refoundAmountCents` (extra "o") via an `@JsonProperty` — now correctly `refund_amount_cents`. Amount in cents; if omitted, the refund logic falls back to a full refund |
+
+> **FIXED**: previously the JSON key was literally `refoundAmountCents` (typo of "refund" → "refound").
+> The offending `@JsonProperty` has been removed, so the field now serializes/deserializes as
+> `refund_amount_cents`. **Clients that were sending `refoundAmountCents` must switch to
+> `refund_amount_cents`.**
+
+**Business validation**: the `Payment` must exist and be in **`SUCCEEDED`** status
+(`payment.isSucceeded()`). Otherwise it is rejected with:
+```
+Cannot refund Payment in status: {status}
+```
+
+**Response 200** (`RefundResponse`):
+```json
+{
+  "refund_id": "re_1ABC23DEfghijk",
+  "payment_intent_id": "pi_3ABC123",
+  "refunded_amount_cents": 5000,
+  "status": "succeeded"
+}
+```
+
+| JSON Key | Java Field |
+|---|---|
+| `refund_id` | `refundId` |
+| `payment_intent_id` | `paymentIntentId` |
+| `refunded_amount_cents` | `refundedAmountCents` |
+| `status` | `status` |
+
+**Internal details of the Stripe Refund created**:
+- `paymentIntent`: taken from `payment.getTransactionId()` (the original PaymentIntent)
+- `amount`: optional — if `refund_amount_cents` is provided, it's a partial refund
+- `reason`: converted from the received String to the `RefundCreateParams.Reason` enum
+- `metadata`: `{ "orderId": <id>, "paymentId": <id> }`
+
+**Side effects**: a `RefundInitiatedEvent` is published for asynchronous processing.
+
+**Errors**:
+- `400 Bad Request`: invalid request or Payment not found
+- `422 Unprocessable Entity`: Payment is not in SUCCEEDED status (cannot be refunded)
+- `500 Internal Server Error`: Stripe API error
+
+---
+
+#### POST `/api/v1/payments/stripe/webhook` — Stripe webhook
+
+**No JWT authentication** — this endpoint is invoked directly by Stripe's servers, not by the
+frontend. Security is guaranteed by validating the **cryptographic signature** of the payload.
+
+**Content-Type**: `application/json`
+
+**Required headers**:
+
+| Header | Description |
+|---|---|
+| `Stripe-Signature` | HMAC signature generated by Stripe using `STRIPE_WEBHOOK_SECRET` |
+
+**Request Body**: raw JSON exactly as sent by Stripe (the controller receives it as a `String
+payload`, not a typed DTO, so it can validate the signature against the exact string). Because it is
+not a DTO, `@JsonNaming` does not apply — the payload keys are whatever Stripe sends.
+
+**Signature verification**:
+```java
+try {
+    event = Webhook.constructEvent(payload, stripeSignature, stripeProperties.getWebhookSecret());
+} catch (SignatureVerificationException e) {
+    return ResponseEntity.badRequest().body("Invalid Stripe signature");
+}
+```
+
+**Event types handled**:
+
+| Stripe Event | Backend Action |
+|---|---|
+| `payment_intent.succeeded` | Publishes `StripePaymentSucceededEvent(source, stripePaymentIntentId, orderId, amountReceived)` — `orderId` is read from the PaymentIntent's `metadata.orderId` |
+| `payment_intent.payment_failed` | Publishes `StripePaymentFailedEvent(source, stripePaymentIntentId, orderId, failureReason)` — `failureReason` comes from `lastPaymentError.message`, or `"Unknown reason"` if not present |
+| `charge.refunded` | Publishes `RefundCompletedEvent(source, refundId, paymentId, orderId, amountCents, status)` — only if `metadata.orderId` and `metadata.paymentId` are present on the Refund |
+
+**Response 200 OK**:
+```
+Webhook processed
+```
+
+**Response 400 Bad Request** (invalid signature):
+```
+Invalid Stripe signature
+```
+
+**Response 422 Unprocessable Entity** (unsupported event type):
+```
+Unhandled event type: {event.type}
+```
+
+**Response 500 Internal Server Error**:
+```
+Error processing webhook: {detail}
+```
+
+> **Technical note**: this endpoint is annotated with `@Transactional`. To test it locally, it is
+> recommended to use the `stripe CLI` (`stripe listen --forward-to
+> localhost:8092/api/v1/payments/stripe/webhook`) to forward test events with a valid signature.
+
+---
+
+### 11.3 Google Gemini / Spring AI — Feedback Assistant
+
+**Configuration** (`ChatConfig.java`):
+```java
+@Configuration
+public class ChatConfig {
+  @Bean
+  public ChatClient chatClient(ChatModel chatModel){
+    return ChatClient.builder(chatModel)
+      .defaultSystem("""
+        Eres un asistente especializado en encuestas de clima laboral (Dentro del Feedback BC del proyecto).
+        Ayudas a redactar preguntas, resumir resultados y sugerir mejoras de encuestas.
+        Responde siempre en espanol y de forma breve.
+      """)
+      .build();
+  }
+}
+```
+
+**Environment variables / properties**:
+```properties
+spring.ai.google.genai.api-key=${GOOGLE_GENAI_API_KEY:***}
+spring.ai.google.chat.model=gemini-2.5-flash
+spring.ai.google.genai.chat.temperature=0.4
+```
+
+- **Model**: `gemini-2.5-flash`
+- **Temperature**: `0.4` (more deterministic/focused answers, less creative)
+- **Fixed system prompt**: in Spanish, specialized in workplace climate surveys (context of the
+  Feedback bounded context). This means the AI assistant will always respond in Spanish regardless
+  of the language of the incoming `prompt`.
+
+**Exposed endpoint**: `POST /api/v1/feedback-assistant` — documented in detail in
+[section 5.5](#55-feedback-assistant-ai--apiv1feedback-assistant).
+
+**Internal response generation flow** (`FeedbackAssistantServiceImpl`):
+1. If `survey_id` is present in the request, the survey is looked up (`GetSurveyByIdQuery`) and a
+   context string is prepended to the prompt with the format: `"Encuesta: {title} - {description}. "`
+2. The context (if any) is concatenated with the user's `prompt`.
+3. It is sent to the `ChatClient` (Gemini) via `chatClient.prompt().user(...).call().content()`.
+4. The response is wrapped in `AssistantAnswer` and returned.
+
+```java
+public AssistantAnswer handle(AskFeedbackAssistantCommand command) {
+    var contextBuilder = new StringBuilder();
+    if (command.surveyId() != null){
+        surveyQueryService.handle(new GetSurveyByIdQuery(command.surveyId()))
+            .ifPresent(survey -> contextBuilder
+                .append("Encuesta: ").append(survey.getTitle())
+                .append(" - ").append(survey.getDescription()).append(". "));
+    }
+    try {
+        var response = chatClient.prompt()
+            .user(u -> u.text(contextBuilder + command.prompt()))
+            .call()
+            .content();
+        return new AssistantAnswer(response);
+    } catch (Exception e) {
+        throw new RuntimeException("Error generating assistant response: " + e.getMessage(), e);
+    }
+}
+```
+
+> If the provided `survey_id` does not exist, the call does **not** fail: no context is added and
+> the user's prompt is simply sent alone (silent behavior, no 404 error).
+
+---
+
+### 11.4 Controllers Added
+
+| Controller | Base Route | Bounded Context | Purpose |
+|---|---|---|---|
+| `StripePaymentController` | `/api/v1/payments/stripe` | Payment Service | Stripe checkout, retry, refund, webhook |
+| `FeedbackAssistantController` | `/api/v1/feedback-assistant` | Feedback | AI assistant (Gemini) for surveys |
+
+The `AssetController` (`/api/v1/assets`) already existed, but its `POST` endpoint changed from a
+JSON DTO to `multipart/form-data` to integrate with Cloudinary.
+
+---
+
+## 12. Seed Data
+
+When started with the `dev` profile, `data.sql` inserts:
+
+### Test Credentials
+
+All accounts use the password `password123` (BCrypt hash).
+
+| Email | Role | Company |
+|---|---|---|
+| `carlos.mendoza@techcorp.pe` | Employee (Backend Dev) | TechCorp SAC |
+| `maria.lopez@techcorp.pe` | Employee (Frontend Dev) | TechCorp SAC |
+| `pedro.garcia@techcorp.pe` | Employee (QA) | TechCorp SAC |
+| `ana.martinez@techcorp.pe` | Employee (PM) | TechCorp SAC |
+| `luis.rodriguez@innovateperu.pe` | Employee (Data Analyst) | InnovatePeru SRL |
+| `sofia.hernandez@innovateperu.pe` | Employee (DevOps) | InnovatePeru SRL |
+| `diego.ramirez@innovateperu.pe` | Employee (Tech Lead) | InnovatePeru SRL |
+| `valentina.torres@innovateperu.pe` | Employee (Junior Dev) | InnovatePeru SRL |
+
+### Full Flow Example (including Stripe and AI)
+
+```bash
+BASE=http://localhost:8092
+
+# 1. Authenticate
+curl -X POST $BASE/api/v1/authentication/sign-in \
+  -H "Content-Type: application/json" \
+  -d '{"email":"carlos.mendoza@techcorp.pe","password":"password123"}'
+
+TOKEN="eyJhbGciOiJIUzI1NiIs..."
+
+# 2. Create an order (snake_case body)
+curl -X POST $BASE/api/v1/orders \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_account_id":1,"amount":99,"membership_id":1}'
+
+# 3. Create the Stripe PaymentIntent for that order
+curl -X POST $BASE/api/v1/payments/stripe/checkout \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"order_id":1,"currency":"usd"}'
+# → { "client_secret": "pi_..._secret_..." }  (use it in the frontend with Stripe.js)
+
+# 4. Upload an attachment (multipart, not JSON — form-field names stay camelCase)
+curl -X POST $BASE/api/v1/assets \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "messageId=1" \
+  -F "name=report.pdf" \
+  -F "fileType=PDF" \
+  -F "file=@./report.pdf"
+
+# 5. Ask the AI assistant
+curl -X POST $BASE/api/v1/feedback-assistant \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"survey_id":1,"prompt":"Suggest 3 questions about teamwork"}'
+```
+
+---
+
+## 13. Naming Reference (Request vs Response)
+
+> **As of 2026-07-03, all JSON keys are snake_case for both requests and responses** (class-level
+> `@JsonNaming(SnakeCaseStrategy)` on every DTO). Request and response keys now **match** for the
+> same logical field. This table lists the canonical snake_case key per field, plus the few
+> residual quirks that come from misnamed Java fields (not from naming).
+
+| Bounded Context | Logical Field | Java Field | JSON Key (request & response) |
+|---|---|---|---|
+| IAM / User | ID | `userId` | `user_id` |
+| IAM / User | last name | `lastName` | `last_name` |
+| IAM / User | phone | `phoneNumber` | `phone_number` |
+| IAM / UserAccount | ID | `userAccountId` | `user_account_id` |
+| IAM / UserAccount | anonymous name | `anonymousName` | `anonymous_name` |
+| IAM / EmployeeProfile | start date (request) | `dateStart` | `date_start` |
+| IAM / EmployeeProfile | start date (response) | `starStart` ⚠️ | `star_start` (**field typo, left intact**) |
+| IAM / RRHHProfile | department | `RRHHDepartment` ⚠️ | `rrhhdepartment` (**consecutive caps, no `_`**) |
+| IAM / RRHHProfile | hierarchy | `statusHierarchy` | `status_hierarchy` |
+| Dashboard / Company | ID | `companyId` | `company_id` (**typo `comapany_id` fixed**) |
+| Dashboard / Company | RUC | `RUC` | `ruc` |
+| Dashboard / Company | contact email | `contactEmail` | `contact_email` |
+| Dashboard / Company | contact phone | `contactPhone` | `contact_phone` |
+| Dashboard / AreaCompany | budget | `annualBudget` | `annual_budget` |
+| Dashboard / Widget | period | `refreshPeriod` | `refresh_period` |
+| Dashboard / WorkTeam | name | `teamName` | `team_name` |
+| Dashboard / WorkTeam | leader | `leaderOfTeam` | `leader_of_team` |
+| Feedback / Survey | target type | `targetType` | `target_type` |
+| Feedback / Survey | expiration | `expirationTime` | `expiration_time` (**`expirationType` mismatch fixed**) |
+| Feedback / QuestionSurvey | text | `textQuestion` | `text_question` |
+| Feedback / Answer | score | `scoreAnswer` | `score_answer` |
+| Feedback / AssistantAnswer | AI answer | `contentAnswer` | `content_answer` |
+| Payment / Membership | start | `membershipStart` | `membership_start` |
+| Payment / Order | account | `userAccountId` | `user_account_id` |
+| Payment / Payment | transaction | `transactionId` | `transaction_id` |
+| Payment / MembershipPlan | name | `planName` | `plan_name` |
+| Payment / Stripe Checkout | client secret | `clientSecret` | `client_secret` |
+| Payment / Stripe Refund | refund amount (request) | `refundAmountCents` | `refund_amount_cents` (**typo `refoundAmountCents` fixed**) |
+| Payment / Stripe Refund | refunded amount (response) | `refundedAmountCents` | `refunded_amount_cents` |
+| Notification / Detail | notification | `notificationId` | `notification_id` |
+| Forum / Thread | area | `areaCompanyId` | `area_company_id` |
+| Forum / Message | content | `contentMessage` | `content_message` |
+| Forum / Asset | size | `fileSize` | `file_size` (response; not sent in the multipart request) |
+| Forum / Asset | type | `fileType` | `file_type` (JSON) / `fileType` (multipart form field) |
+| Performance | employee | `employeeProfileId` | `employee_profile_id` |
+| Performance | date | `dateTime` | `date_time` |
+| CommentEmployee | RRHH | `rrhhProfileId` | `rrhh_profile_id` |
+
+> ⚠️ = the JSON key looks odd because the **Java field name** itself is misnamed. Those field names
+> were intentionally left untouched by the naming standardization.
+>
+> **Multipart note**: `POST /api/v1/assets` uses `@RequestParam` form fields, which are NOT governed
+> by `@JsonNaming`. Its form fields remain `messageId`, `name`, `fileType`, `file`.
+
+---
+
+## 14. Endpoint Routes — Quick Reference
+
+| Bounded Context | Base Route | Note |
+|---|---|---|
+| Auth | `/api/v1/authentication` | Public |
+| Users | `/api/v1/users` | |
+| User Accounts | `/api/v1/user_accounts` | underscore, no hyphen |
+| Employee Profile | `/api/v1/employee-profile` | **singular** |
+| RRHH Profiles | `/api/v1/rrhh-profiles` | plural |
+| Companies | `/api/v1/companies` | |
+| Area Company | `/api/v1/area-company` | **singular** |
+| Dashboards | `/api/v1/dashboards` | |
+| Widgets | `/api/v1/widgets` | |
+| Unit of Work | `/api/v1/unit-of-work` | **singular** |
+| Work Teams | `/api/v1/work-teams` | |
+| Surveys | `/api/v1/surveys` | |
+| Survey Responses | `/api/v1/survey-responses` | |
+| Question Surveys | `/api/v1/question-surveys` | |
+| Answers | `/api/v1/answers` | |
+| Feedback Assistant (AI) | `/api/v1/feedback-assistant` | POST only, requires auth |
+| Orders | `/api/v1/orders` | |
+| Memberships | `/api/v1/memberships` | |
+| Payments (manual) | `/api/v1/payments` | Traditional CRUD |
+| Payments (Stripe) | `/api/v1/payments/stripe` | checkout, retry, refund, webhook |
+| Membership Plans | `/api/v1/membership-plans` | |
+| Benefits | `/api/v1/benefits` | |
+| Notifications | `/api/v1/notifications` | |
+| Notification Details | `/api/v1/notification-details` | |
+| Forums | `/api/v1/forums` | |
+| Categories | `/api/v1/categories` | |
+| Threads | `/api/v1/threads` | |
+| Messages | `/api/v1/messages` | |
+| Assets | `/api/v1/assets` | creation via multipart + Cloudinary |
+| Reports | `/api/v1/reports` | |
+| Performances | `/api/v1/performances` | |
+| Comment Employees | `/api/v1/comment-employees` | |
+
+### Sub-resources (linking operations) — snake_case bodies
+
+| Route | Method | Request Key |
+|---|---|---|
+| `/api/v1/companies/{id}/employees` | POST | `{"employee_id": 1}` |
+| `/api/v1/companies/{id}/area-companies` | POST | `{"area_company_id": 1}` |
+| `/api/v1/area-company/{id}/unitsOfWork` | POST | `{"unit_of_work_id": 1}` |
+| `/api/v1/unit-of-work/{id}/work-teams` | POST | `{"work_team_id": 1}` |
+| `/api/v1/dashboards/{id}/widgets` | POST | `{"widget_id": 1}` |
+| `/api/v1/forums/{id}/categories` | POST | `{"category_id": 1}` |
+| `/api/v1/categories/{id}/threads` | POST | `{"thread_id": 1}` |
+| `/api/v1/threads/{id}/messages` | POST | `{"message_id": 1}` |
+| `/api/v1/messages/{id}/assets` | POST | `{"asset_id": 1}` |
+| `/api/v1/membership-plans/{id}/benefits` | POST | `{"benefit_id": 1}` |
+| `/api/v1/performances/{id}/comment-employees` | POST | `{"comment_id": 1}` |
+
+### External Service Endpoints (quick reference)
+
+| Route | Method | Auth | Content-Type | Purpose |
+|---|---|---|---|---|
+| `/api/v1/assets` | POST | JWT | `multipart/form-data` | Upload file to Cloudinary + create Asset |
+| `/api/v1/payments/stripe/checkout` | POST | JWT | `application/json` | Create a Stripe PaymentIntent |
+| `/api/v1/payments/stripe/{paymentId}/retry` | POST | JWT | `application/json` | Retry a failed payment |
+| `/api/v1/payments/stripe/{paymentId}/refund` | POST | JWT | `application/json` | Initiate a refund |
+| `/api/v1/payments/stripe/webhook` | POST | **Stripe signature** (no JWT) | `application/json` | Receive asynchronous Stripe events |
+| `/api/v1/feedback-assistant` | POST | JWT | `application/json` | Query the AI assistant (Gemini) |

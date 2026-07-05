@@ -10,11 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Clonar el repositorio
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Configurar Java 21 firmemente
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         id: setup-java
@@ -23,7 +21,6 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      # 3. Crear el archivo secrets.properties dinámicamente con los secretos reales de GitHub
       - name: Generate secrets.properties
         run: |
           echo "BACKEND_BASE_URL=${{ secrets.BACKEND_BASE_URL }}" >> secrets.properties
@@ -31,7 +28,6 @@ jobs:
           echo "GOOGLE_OAUTH_CLIENT=${{ secrets.GOOGLE_OAUTH_CLIENT }}" >> secrets.properties
           echo "API_KEY_EXTERNAL_SERVICE=${{ secrets.API_KEY_EXTERNAL_SERVICE }}" >> secrets.properties
 
-      # 4. Forzar a Gradle a usar Java 21 mediante variables de entorno globales
       - name: Build APK with Java 21 Force
         env:
           JAVA_HOME: ${{ steps.setup-java.outputs.path }}
@@ -39,7 +35,6 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug -x test
 
-      # 4. Desplegar el APK generado a Firebase App Distribution
       - name: Upload to Firebase App Distribution
         uses: w9jds/firebase-action@v2.2.2
         with:
