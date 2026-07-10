@@ -10,4 +10,16 @@ object FeedbackRoutes {
 
     /** FlowWork AI chat surface reached from the Home action card. */
     const val AI_CHAT: String = "feedback/ai_chat"
+
+    /** Nav-argument key carrying the target `survey_id` into the take-survey destination. */
+    const val ARG_SURVEY_ID: String = "survey_id"
+
+    /**
+     * Answer-a-survey destination. Parameterized by the backend `survey_id`; the screen fetches
+     * the question set and filters it to that survey. Registered with a `LongType` argument.
+     */
+    const val TAKE_SURVEY: String = "feedback/take_survey/{$ARG_SURVEY_ID}"
+
+    /** Builds a concrete [TAKE_SURVEY] path for [surveyId]. */
+    fun takeSurvey(surveyId: Long): String = "feedback/take_survey/$surveyId"
 }

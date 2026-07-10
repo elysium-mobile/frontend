@@ -1208,11 +1208,35 @@ deleted; the AI-chat sub-context (`FeedbackStore`/`AiChatViewModel`) is untouche
 
 #### Phase 10 caveats
 
-- **No answer-flow screen yet.** `onStartSurvey` is still an unwired no-op; `getSurveyQuestions`
-  / `getSurveyResponses` / `submitResponse` are implemented and ready for a survey-detail
-  screen that collects answers and calls `PendingSurveysViewModel.submitResponse(...)`.
 - The old `survey_*` string resources (climate/productivity seed copy) are now dead and can
   be pruned in a follow-up cleanup.
+
+#### Phase 10 addendum — take-survey answer flow
+
+The previously-unwired `onStartSurvey` no-op is now a real destination.
+
+- **Route**: `FeedbackRoutes.TAKE_SURVEY = "feedback/take_survey/{survey_id}"` (`NavType.LongType`
+  arg `survey_id`) + a `takeSurvey(surveyId)` builder, registered in `feedbackGraph`
+  (`FeedbackNavigation.kt` — not `AuthNavigation.kt`; feedback routing lives in its own graph).
+  `PendingSurveysScreen`'s "Start" button navigates to it, forwarding `survey_id`.
+- **`TakeSurveyScreen`** loads the questions via a new `GetSurveyQuestionsUseCase` (wrapping the
+  existing `SurveyStore.getSurveyQuestions`, which hits `GET /api/v1/question-surveys` and filters
+  client-side by `survey_id`) and renders an input per question, switched on a new
+  `SurveyQuestionType` enum (`shared/utils/values/`, case-insensitive `fromKey`): `RATING` → 1–5
+  numeric selector, `OPEN_SURVEY` → text field, `MULTIPLE_CHOICE` → single-select rows (a **default
+  agreement option set** — the `QuestionSurvey` bean carries no per-question options), and any
+  unknown type (e.g. the backend's `SCALE`) → text-field fallback.
+- **`TakeSurveyViewModel`** (one-VM-per-screen, not a monolithic `FeedbackViewModel`) buffers one
+  answer per `question_survey_id`, gates submit until every question is answered, and on submit
+  **folds** the per-question answers into the two fields the backend actually accepts:
+  `commentary` (readable multiline "question: answer" block) and `cause` (the categorical
+  RATING/MULTIPLE_CHOICE answers, else `"GENERAL"`). This fold is dictated by the `survey-responses`
+  contract having **no per-question answer array** — only `survey_id` / `employee_profile_id` /
+  `submitted_at` / `commentary` / `cause`. Submission reuses `SubmitSurveyResponseUseCase` (resolves
+  `employee_profile_id` from prefs, defaults `submitted_at`); on HTTP 201 the form clears and a
+  `submitted` latch pops the screen back to `PendingSurveysScreen`.
+- **Follow-up**: when the backend exposes a per-question answer resource, move submission there —
+  the screen/VM answer-collection stays; only the fold + endpoint change.
 
 ### ✅ Phase 11 — Notifications backend integration against the live Spring Boot API
 

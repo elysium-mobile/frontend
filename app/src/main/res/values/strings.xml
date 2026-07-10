@@ -246,4 +246,11 @@
     <string name="survey_climate_desc">Share how you feel about your team and environment.</string>
     <string name="survey_productivity_title">Productivity</string>
     <string name="survey_productivity_desc">Help us understand how to make your workflow better.</string>
+    <string name="take_survey_title">Survey</string>
+    <string name="survey_submit_button">Submit</string>
+    <string name="take_survey_empty">This survey has no questions yet.</string>
+    <string name="take_survey_open_hint">Write your answer</string>
+    <string name="survey_choice_agree">Agree</string>
+    <string name="survey_choice_neutral">Neutral</string>
+    <string name="survey_choice_disagree">Disagree</string>
 </resources>

@@ -2,9 +2,12 @@ package com.elysium.softwork.feedback.presentation.navigation
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import com.elysium.softwork.feedback.presentation.views.chat.AiChatScreen
 import com.elysium.softwork.feedback.presentation.views.surveys.PendingSurveysScreen
+import com.elysium.softwork.feedback.presentation.views.surveys.TakeSurveyScreen
 import com.elysium.softwork.shared.presentation.navigation.PushEnter
 import com.elysium.softwork.shared.presentation.navigation.PushExit
 import com.elysium.softwork.shared.presentation.navigation.PushPopEnter
@@ -29,7 +32,28 @@ fun NavGraphBuilder.feedbackGraph(navController: NavHostController) {
     ) {
         PendingSurveysScreen(
             onBack = { navController.popBackStack() },
-            onStartSurvey = { /* The answer flow is not yet wired. */ },
+            onStartSurvey = { surveyId ->
+                surveyId?.let { navController.navigate(FeedbackRoutes.takeSurvey(it)) }
+            },
+        )
+    }
+
+    composable(
+        route = FeedbackRoutes.TAKE_SURVEY,
+        arguments = listOf(
+            navArgument(FeedbackRoutes.ARG_SURVEY_ID) { type = NavType.LongType },
+        ),
+        enterTransition = PushEnter,
+        exitTransition = PushExit,
+        popEnterTransition = PushPopEnter,
+        popExitTransition = PushPopExit,
+    ) { backStackEntry ->
+        val surveyId: Long = backStackEntry.arguments?.getLong(FeedbackRoutes.ARG_SURVEY_ID) ?: 0L
+        TakeSurveyScreen(
+            surveyId = surveyId,
+            onBack = { navController.popBackStack() },
+            // Pop back to the pending-surveys list once the response is stored (HTTP 201).
+            onSubmitted = { navController.popBackStack() },
         )
     }
 

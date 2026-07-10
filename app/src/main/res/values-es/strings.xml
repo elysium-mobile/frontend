@@ -246,4 +246,11 @@
     <string name="survey_climate_desc">Cuéntanos cómo te sientes con tu equipo y entorno.</string>
     <string name="survey_productivity_title">Productividad</string>
     <string name="survey_productivity_desc">Ayúdanos a entender cómo mejorar tu flujo de trabajo.</string>
+    <string name="take_survey_title">Encuesta</string>
+    <string name="survey_submit_button">Enviar</string>
+    <string name="take_survey_empty">Esta encuesta aún no tiene preguntas.</string>
+    <string name="take_survey_open_hint">Escribe tu respuesta</string>
+    <string name="survey_choice_agree">De acuerdo</string>
+    <string name="survey_choice_neutral">Neutral</string>
+    <string name="survey_choice_disagree">En desacuerdo</string>
 </resources>
