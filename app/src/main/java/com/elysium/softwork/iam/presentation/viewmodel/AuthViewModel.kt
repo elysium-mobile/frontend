@@ -15,11 +15,11 @@ import com.elysium.softwork.iam.application.usecase.RegisterWithGoogleUseCase
 import com.elysium.softwork.iam.application.usecase.SignInWithGoogleUseCase
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.data.network.BadRequestException
+import com.elysium.softwork.shared.utils.constants.DateTimeFormats
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.time.Instant
 
 /**
  * UI state holder for the IAM flows (login, register).
@@ -76,7 +76,7 @@ class AuthViewModel(
         val lastName: String = "",
         val phoneNumber: String = "",
         val dni: String = "",
-        val dateStart: String = Instant.now().toString(),
+        val dateStart: String = DateTimeFormats.nowIso(),
         val position: String = "",
         val salary: String = "",
     ) {

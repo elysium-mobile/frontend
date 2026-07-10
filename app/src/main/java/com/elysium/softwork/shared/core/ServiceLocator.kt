@@ -61,8 +61,13 @@ class ServiceLocator(context: Context) {
         ApiClient.installUnauthorizedHandler { authStore.invalidateSession() }
     }
 
-    /** Process-wide Gson used to deserialize structured error payloads (e.g. [BadRequestResponse]). */
-    private val gson: Gson by lazy { Gson() }
+    /**
+     * Process-wide Gson used to deserialize structured error payloads (e.g. [BadRequestResponse]).
+     * Reuses [ApiClient.gson] so the error-parsing path shares the exact same date policy
+     * (`setDateFormat(DateTimeFormats.ISO_LOCAL_DATE_TIME)`) as the Retrofit converter — one
+     * configuration, no drift.
+     */
+    private val gson: Gson by lazy { ApiClient.gson }
 
     private val authWebService: AuthWebService by lazy {
         ApiClient.retrofit.create(AuthWebService::class.java)

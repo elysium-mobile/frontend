@@ -1,6 +1,9 @@
 package com.elysium.softwork.shared.data.network
 
 import com.elysium.softwork.BuildConfig
+import com.elysium.softwork.shared.utils.constants.DateTimeFormats
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -100,6 +103,24 @@ object ApiClient {
             .build()
     }
 
+    /**
+     * Process-wide [Gson] carrying the uniform date policy. `setDateFormat` pins every
+     * `java.util.Date` to the backend's [DateTimeFormats.ISO_LOCAL_DATE_TIME] pattern on both
+     * serialization and deserialization, so any current or future `Date`-typed wire field maps
+     * to `yyyy-MM-dd'T'HH:mm:ss` automatically. Exposed so callers that parse error payloads
+     * (e.g. `ServiceLocator`'s `BadRequestResponse` reader) share the exact same configuration
+     * — one Gson, no drift.
+     *
+     * Note: the timestamp fields currently on the domain beans are `String` (already ISO), which
+     * Gson passes through untouched; those are formatted at the source via [DateTimeFormats].
+     * This policy governs any `Date`/`Calendar` field the beans may adopt later.
+     */
+    val gson: Gson by lazy {
+        GsonBuilder()
+            .setDateFormat(DateTimeFormats.ISO_LOCAL_DATE_TIME)
+            .create()
+    }
+
     val retrofit: Retrofit by lazy {
         val baseUrl = BuildConfig.BACKEND_BASE_URL
         check(baseUrl.isNotBlank()) {
@@ -110,7 +131,7 @@ object ApiClient {
         Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
     }
 }

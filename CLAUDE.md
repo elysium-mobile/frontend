@@ -1644,6 +1644,33 @@ caught in review.
 Third-party API keys must never appear in `WebService` annotations either. Route them
 through `ApiKeyInterceptor` on a per-host basis (see `ApiKeyInterceptor.hostKeyMap`).
 
+### Date-time serialization rule (uniform ISO 8601 local, no offset)
+
+The backend mandates the **extended ISO 8601 local pattern without any zone/offset** —
+`yyyy-MM-dd'T'HH:mm:ss` (e.g. `2026-12-31T23:59:59`), no fractional seconds, no trailing `Z`,
+no `±HH:mm`. The pattern has a single source of truth:
+[`shared/utils/constants/DateTimeFormats`](app/src/main/java/com/elysium/softwork/shared/utils/constants/DateTimeFormats.kt)
+(`ISO_LOCAL_DATE_TIME` + `nowIso()` / `format(LocalDateTime)`).
+
+- **Converter policy.** `ApiClient.gson` is built with
+  `GsonBuilder().setDateFormat(DateTimeFormats.ISO_LOCAL_DATE_TIME)` and drives **both** the
+  Retrofit `GsonConverterFactory` **and** `ServiceLocator`'s error-payload parser (one Gson, no
+  drift). This governs any `java.util.Date` wire field automatically. Note the domain beans
+  currently carry timestamps as **`String`** (already ISO), which Gson passes through untouched —
+  so `setDateFormat` is the forward-looking guarantee, while the string producers below are the
+  active enforcement point.
+- **String producers must go through `DateTimeFormats`.** Client-generated timestamps use
+  `DateTimeFormats.nowIso()` (built on `LocalDateTime` so no offset is emitted) — never
+  `Instant.now().toString()` (which appends `.SSSZ`, the offset the backend rejects). Enforced for
+  `date_start` (`AuthViewModel.GoogleSignUpForm`, Google Phase-2 profile creation) and
+  `submitted_at` (`SubmitSurveyResponseUseCase`, Feedback).
+- **Still date-only (`yyyy-MM-dd`, not yet routed through the formatter):** `report_date`
+  (`SubmitForumReportUseCase`), `payment_date` (`PayMembershipUseCase`), and `last_message`
+  (`CreateThreadUseCase`). These are already zone-free valid ISO dates, so they are **not** the
+  offset offender; they were left as date-only because the backend fields may be `LocalDate`. If a
+  given field is actually a `LocalDateTime`, swap its `LocalDate.now().toString()` for
+  `DateTimeFormats.nowIso()` — one line, same utility.
+
 ### The `unset` sentinel
 
 The Secrets Gradle Plugin refuses to emit empty-string values as `BuildConfig` fields
