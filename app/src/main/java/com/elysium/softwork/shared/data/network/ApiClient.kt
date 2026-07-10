@@ -4,10 +4,19 @@ import com.elysium.softwork.BuildConfig
 import com.elysium.softwork.shared.utils.constants.DateTimeFormats
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
+import com.google.gson.JsonPrimitive
+import com.google.gson.JsonSerializationContext
+import com.google.gson.JsonSerializer
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.lang.reflect.Type
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 
 /**
  * Process-wide Retrofit instance. Bounded contexts retrieve their typed WebService through
@@ -104,20 +113,43 @@ object ApiClient {
     }
 
     /**
-     * Process-wide [Gson] carrying the uniform date policy. `setDateFormat` pins every
-     * `java.util.Date` to the backend's [DateTimeFormats.ISO_LOCAL_DATE_TIME] pattern on both
-     * serialization and deserialization, so any current or future `Date`-typed wire field maps
-     * to `yyyy-MM-dd'T'HH:mm:ss` automatically. Exposed so callers that parse error payloads
-     * (e.g. `ServiceLocator`'s `BadRequestResponse` reader) share the exact same configuration
-     * — one Gson, no drift.
+     * ISO 8601 UTC adapter for `java.time.Instant`. Gson cannot (de)serialize `java.time` types
+     * natively, so this bridges `Instant` ↔ its [DateTimeFormatter.ISO_INSTANT] string
+     * (`…THH:mm:ss(.SSS)Z`) — the exact UTC-with-`Z` shape the backend mandates.
+     */
+    private val instantAdapter: Any = object : JsonSerializer<Instant>, JsonDeserializer<Instant> {
+        override fun serialize(
+            src: Instant,
+            typeOfSrc: Type,
+            context: JsonSerializationContext,
+        ): JsonElement = JsonPrimitive(DateTimeFormatter.ISO_INSTANT.format(src))
+
+        override fun deserialize(
+            json: JsonElement,
+            typeOfT: Type,
+            context: JsonDeserializationContext,
+        ): Instant = Instant.parse(json.asString)
+    }
+
+    /**
+     * Process-wide [Gson] carrying the uniform UTC date policy:
+     * - `setDateFormat([DateTimeFormats.ISO_UTC_MILLIS])` pins legacy `java.util.Date` fields to
+     *   the `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` pattern.
+     * - [instantAdapter] maps `java.time.Instant` to/from `DateTimeFormatter.ISO_INSTANT`
+     *   (the native Java 8+ formatter the contract specifies), guaranteeing the trailing `Z`.
+     *
+     * Exposed so callers that parse error payloads (e.g. `ServiceLocator`'s `BadRequestResponse`
+     * reader) share the exact same configuration — one Gson, no drift.
      *
      * Note: the timestamp fields currently on the domain beans are `String` (already ISO), which
-     * Gson passes through untouched; those are formatted at the source via [DateTimeFormats].
-     * This policy governs any `Date`/`Calendar` field the beans may adopt later.
+     * Gson passes through untouched; those are produced in the correct UTC shape at the source via
+     * [DateTimeFormats.nowIso]. This adapter/policy governs any `Instant`/`Date` field the beans
+     * may adopt later.
      */
     val gson: Gson by lazy {
         GsonBuilder()
-            .setDateFormat(DateTimeFormats.ISO_LOCAL_DATE_TIME)
+            .setDateFormat(DateTimeFormats.ISO_UTC_MILLIS)
+            .registerTypeAdapter(Instant::class.java, instantAdapter)
             .create()
     }
 

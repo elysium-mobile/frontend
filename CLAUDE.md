@@ -1233,16 +1233,39 @@ The previously-unwired `onStartSurvey` no-op is now a real destination.
   RATING/MULTIPLE_CHOICE answers, else `"GENERAL"`). This fold is dictated by the `survey-responses`
   contract having **no per-question answer array** — only `survey_id` / `employee_profile_id` /
   `submitted_at` / `commentary` / `cause`. Submission reuses `SubmitSurveyResponseUseCase` (resolves
-  `employee_profile_id` from prefs, defaults `submitted_at`); on HTTP 201 **both** the answers (form
-  input) and the loaded question set (question state) are invalidated and a `submitted` latch pops
-  the screen back to `PendingSurveysScreen` (the screen gates its empty-state on `!isLoading &&
-  !submitted` so neither the initial load nor the post-submit teardown flashes the placeholder).
+  `employee_profile_id` from prefs, defaults `submitted_at`); on a resolved submission **both** the
+  answers (form input) and the loaded question set (question state) are invalidated and an
+  `outcome: StateFlow<SurveyStatusType?>` drives navigation (the screen gates its empty-state on
+  `!isLoading && outcome == null` so neither the initial load nor the post-submit teardown flashes
+  the placeholder).
 - **Single persistence endpoint — `/api/v1/answers` deliberately excluded.** Submission is exactly
   one POST to `/api/v1/survey-responses`; the deprecated per-answer `/api/v1/answers` route is never
   referenced anywhere in the app (no `AnswerWebService`, no per-question loop). The client-side fold
   into `commentary`/`cause` is what makes the single-endpoint path sufficient. Do not reintroduce a
   per-answer route — if the backend later ships a per-question answer resource, replace the fold with
   it, keeping submission a single call.
+
+#### Phase 10 addendum — survey-status screen + already-answered interception
+
+The take-survey flow now terminates on a dedicated status destination instead of a blind pop.
+
+- **`SurveyStatusType`** (`shared/utils/values/`, keys `success` / `already_answered`,
+  case-insensitive `fromKey` defaulting to `SUCCESS`) drives both the `status_type` nav argument
+  and the `SurveyStatusScreen` layout.
+- **Route**: `FeedbackRoutes.SURVEY_STATUS = "feedback/survey_status/{status_type}"`
+  (`NavType.StringType`) + a `surveyStatus(statusKey)` builder, registered in `feedbackGraph`.
+- **`SurveyStatusScreen`** switches on the type: `SUCCESS` → checkmark (`ic_check_circle`, PrimarySky)
+  + "¡Encuesta enviada con éxito!"; `ALREADY_ANSWERED` → warning (`ic_flag`, Warning) + "already
+  submitted" copy. Both expose a single "back to surveys" `SoftWorkButton`.
+- **Interception**: `TakeSurveyViewModel` replaced its boolean `submitted` with
+  `outcome: StateFlow<SurveyStatusType?>`. HTTP 201 → `SUCCESS`. A `400` whose parsed
+  `field_errors.argument` / top-level `message` contains **"already submitted a response for this
+  survey"** (case-insensitive, punctuation-tolerant substring) → `ALREADY_ANSWERED` — this
+  specific rejection bypasses the generic `errorMessage` banner; any other `400`/error still lands
+  on `errorMessage` inline.
+- **Back-stack**: `TakeSurveyScreen.onCompleted(type)` navigates to `surveyStatus(type.key)` with
+  `popUpTo(TAKE_SURVEY){ inclusive = true }`, so the status screen's "back to surveys" pops straight
+  to `PendingSurveysScreen` (never back into the filled-out form).
 
 ### ✅ Phase 11 — Notifications backend integration against the live Spring Boot API
 
@@ -1397,7 +1420,22 @@ List<Message>?` body property (mirrors `Message.attachments` — no Room column,
 bump**; Gson populates it by reflection). `FakeForumStore` gained `refreshThread` +
 `nextRefreshThreadResult` / `refreshThreadInvocations`.
 
-### ✅ Phase 13 — Payment / Membership backend integration against the live Spring Boot API
+#### Phase 12 addendum — live message-count sync (feed ↔ thread)
+
+Posting a reply updates the counters on **both** `ThreadScreen` and the preceding `ForumScreen`
+with no manual refresh, using the shared Room cache as the single reactive source — no cross-VM
+coupling, no re-fetch:
+
+- **`ForumStoreImpl.postMessage`** — after caching the created message (which makes
+  `observeMessages(threadId)` re-emit for `ThreadScreen`), it reads the owning thread from
+  `threadDao` and upserts it with `message_count + 1`. Because `ForumViewModel.threads` is
+  `observeThreads().stateIn(WhileSubscribed)`, that cache write re-emits the feed live; and when
+  the worker presses back, `collectAsStateWithLifecycle` re-subscribes and Room replays the updated
+  rows straight from cache — never `GET /forums/{id}` again.
+- **`ThreadViewModel.sendMessage`** — on the successful `POST /messages`, bumps its one-shot-loaded
+  header `_thread.message_count` by `+1` so the current screen's reply counter reflects instantly
+  (the reply body itself arrives via the `observeMessages` stream).
+- `ForumViewModel` is **unchanged** — the Room flow it already collects is the sync channel.
 
 The `payment.membership` context now talks to the real payment-service API. The mock
 `PlanCatalogue`, the `MOCK_PAYMENT_DELAY_MS`, and the fake in-memory plan list are deleted.
@@ -1644,32 +1682,35 @@ caught in review.
 Third-party API keys must never appear in `WebService` annotations either. Route them
 through `ApiKeyInterceptor` on a per-host basis (see `ApiKeyInterceptor.hostKeyMap`).
 
-### Date-time serialization rule (uniform ISO 8601 local, no offset)
+### Date-time serialization rule (uniform ISO 8601 UTC instant, trailing `Z`)
 
-The backend mandates the **extended ISO 8601 local pattern without any zone/offset** —
-`yyyy-MM-dd'T'HH:mm:ss` (e.g. `2026-12-31T23:59:59`), no fractional seconds, no trailing `Z`,
-no `±HH:mm`. The pattern has a single source of truth:
+The backend mandates the **full ISO 8601 extended UTC instant** with a trailing `Z` designator —
+`DateTimeFormatter.ISO_INSTANT`, e.g. `2026-07-10T14:54:23.879Z`. Every outgoing timestamp is an
+absolute UTC instant (always normalized to `Z`), never a local wall-clock value and never a bare
+`±HH:mm` offset. The policy has a single source of truth:
 [`shared/utils/constants/DateTimeFormats`](app/src/main/java/com/elysium/softwork/shared/utils/constants/DateTimeFormats.kt)
-(`ISO_LOCAL_DATE_TIME` + `nowIso()` / `format(LocalDateTime)`).
+(`ISO_UTC_MILLIS` + `nowIso()` / `format(Instant)`, all built on `java.time.Instant`).
 
-- **Converter policy.** `ApiClient.gson` is built with
-  `GsonBuilder().setDateFormat(DateTimeFormats.ISO_LOCAL_DATE_TIME)` and drives **both** the
-  Retrofit `GsonConverterFactory` **and** `ServiceLocator`'s error-payload parser (one Gson, no
-  drift). This governs any `java.util.Date` wire field automatically. Note the domain beans
-  currently carry timestamps as **`String`** (already ISO), which Gson passes through untouched —
-  so `setDateFormat` is the forward-looking guarantee, while the string producers below are the
-  active enforcement point.
-- **String producers must go through `DateTimeFormats`.** Client-generated timestamps use
-  `DateTimeFormats.nowIso()` (built on `LocalDateTime` so no offset is emitted) — never
-  `Instant.now().toString()` (which appends `.SSSZ`, the offset the backend rejects). Enforced for
-  `date_start` (`AuthViewModel.GoogleSignUpForm`, Google Phase-2 profile creation) and
-  `submitted_at` (`SubmitSurveyResponseUseCase`, Feedback).
-- **Still date-only (`yyyy-MM-dd`, not yet routed through the formatter):** `report_date`
+- **Converter policy.** `ApiClient.gson` drives **both** the Retrofit `GsonConverterFactory`
+  **and** `ServiceLocator`'s error-payload parser (one Gson, no drift). It is built with
+  `setDateFormat(DateTimeFormats.ISO_UTC_MILLIS)` (`yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`, for legacy
+  `java.util.Date`) **plus** a registered `Instant` type adapter that maps `java.time.Instant`
+  through `DateTimeFormatter.ISO_INSTANT` (Gson cannot serialize `java.time` natively). The domain
+  beans currently carry timestamps as **`String`** (already ISO), which Gson passes through
+  untouched — so the adapter/`setDateFormat` are the forward-looking guarantee, while the string
+  producers below are the active enforcement point.
+- **String producers go through `DateTimeFormats`.** Client-generated timestamps use
+  `DateTimeFormats.nowIso()` — `DateTimeFormatter.ISO_INSTANT.format(Instant.now())`, i.e. UTC with
+  the trailing `Z`. Enforced for `date_start` (`AuthViewModel.GoogleSignUpForm`, Google Phase-2
+  profile creation) and `submitted_at` (`SubmitSurveyResponseUseCase`, Feedback).
+- **Still date-only (`yyyy-MM-dd`, not routed through the formatter):** `report_date`
   (`SubmitForumReportUseCase`), `payment_date` (`PayMembershipUseCase`), and `last_message`
-  (`CreateThreadUseCase`). These are already zone-free valid ISO dates, so they are **not** the
-  offset offender; they were left as date-only because the backend fields may be `LocalDate`. If a
-  given field is actually a `LocalDateTime`, swap its `LocalDate.now().toString()` for
-  `DateTimeFormats.nowIso()` — one line, same utility.
+  (`CreateThreadUseCase`) — left as-is because those backend fields may be `LocalDate`. If a given
+  field is actually an instant, swap its `LocalDate.now().toString()` for `DateTimeFormats.nowIso()`.
+
+> **History:** an interim REFI briefly mandated the offset-free local pattern
+> `yyyy-MM-dd'T'HH:mm:ss` (no `Z`, no millis); it was **reversed** by the current UTC-instant
+> contract. `DateTimeFormats` is the single switch point if the policy ever changes again.
 
 ### The `unset` sentinel
 

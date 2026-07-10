@@ -12,8 +12,8 @@ import com.elysium.softwork.shared.utils.constants.DateTimeFormats
  * - resolves the author's `employee_profile_id` **dynamically** from [SharedPrefsManager]
  *   (cached during the post-login sequential profile sync) and binds it to the body;
  * - trims the free-text fields;
- * - defaults `submitted_at` to now in the backend's uniform ISO 8601 local pattern
- *   (`yyyy-MM-dd'T'HH:mm:ss`, no zone/offset) via [DateTimeFormats] when the caller omits it.
+ * - defaults `submitted_at` to now as a full ISO 8601 UTC instant (`…THH:mm:ss(.SSS)Z`, trailing
+ *   `Z`) via [DateTimeFormats] when the caller omits it.
  *
  * The snake_case request keys (`survey_id`, `employee_profile_id`, `submitted_at`) are
  * populated per the backend contract. Stateless; safe to share a single instance process-wide.
@@ -32,7 +32,7 @@ class SubmitSurveyResponseUseCase(
      * @param surveyId target survey id.
      * @param commentary free-text feedback; trimmed before dispatch.
      * @param cause categorized reason; trimmed before dispatch.
-     * @param submittedAt ISO 8601 local date-time (`yyyy-MM-dd'T'HH:mm:ss`); defaults to now when blank.
+     * @param submittedAt ISO 8601 UTC instant (`…THH:mm:ss(.SSS)Z`); defaults to now when blank.
      * @return [Result.success] with the stored [SurveyResponse] or [Result.failure] (a
      *   `400` arrives as a [com.elysium.softwork.shared.data.network.BadRequestException]).
      */

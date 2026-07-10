@@ -46,6 +46,7 @@ import com.elysium.softwork.shared.presentation.theme.PrimaryNavy
 import com.elysium.softwork.shared.presentation.theme.PrimarySky
 import com.elysium.softwork.shared.utils.discriminators.ButtonVariant
 import com.elysium.softwork.shared.utils.values.SurveyQuestionType
+import com.elysium.softwork.shared.utils.values.SurveyStatusType
 
 /**
  * Answer-a-survey screen.
@@ -56,18 +57,19 @@ import com.elysium.softwork.shared.utils.values.SurveyQuestionType
  * single-select rows for `MULTIPLE_CHOICE`, and a text-field fallback for any unknown type.
  *
  * The bottom submit button is enabled only once **every** visible question has captured a
- * non-blank answer. On a confirmed submission the ViewModel flips its `submitted` latch and this
- * screen invokes [onSubmitted] to pop back to the pending-surveys list.
+ * non-blank answer. On a resolved submission the ViewModel sets its `outcome`, and this screen
+ * invokes [onCompleted] with it so the host can route to `SurveyStatusScreen` — HTTP 201 →
+ * [SurveyStatusType.SUCCESS], the unique-constraint `400` → [SurveyStatusType.ALREADY_ANSWERED].
  *
  * @param surveyId backend `survey_id` passed as the navigation argument.
  * @param onBack pops the screen (abandons the in-progress answers).
- * @param onSubmitted invoked once the response is stored (HTTP 201) so the host can pop.
+ * @param onCompleted invoked with the terminal outcome so the host can route to the status screen.
  */
 @Composable
 fun TakeSurveyScreen(
     surveyId: Long,
     onBack: () -> Unit,
-    onSubmitted: () -> Unit,
+    onCompleted: (SurveyStatusType) -> Unit,
     viewModel: TakeSurveyViewModel = viewModel(factory = TakeSurveyViewModel.Factory),
 ) {
     val questions: List<QuestionSurvey> by viewModel.questions.collectAsStateWithLifecycle()
@@ -75,14 +77,14 @@ fun TakeSurveyScreen(
     val isLoading: Boolean by viewModel.isLoading.collectAsStateWithLifecycle()
     val isSubmitting: Boolean by viewModel.isSubmitting.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
-    val submitted: Boolean by viewModel.submitted.collectAsStateWithLifecycle()
+    val outcome: SurveyStatusType? by viewModel.outcome.collectAsStateWithLifecycle()
 
     LaunchedEffect(surveyId) { viewModel.load(surveyId) }
 
-    LaunchedEffect(submitted) {
-        if (submitted) {
-            onSubmitted()
-            viewModel.consumeSubmitted()
+    LaunchedEffect(outcome) {
+        outcome?.let { resolved ->
+            onCompleted(resolved)
+            viewModel.consumeOutcome()
         }
     }
 
@@ -117,7 +119,7 @@ fun TakeSurveyScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (!isLoading && !submitted && questions.isEmpty()) {
+            if (!isLoading && outcome == null && questions.isEmpty()) {
                 item(key = "empty") {
                     Text(
                         text = stringResource(R.string.take_survey_empty),

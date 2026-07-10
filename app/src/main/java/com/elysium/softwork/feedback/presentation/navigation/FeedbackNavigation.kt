@@ -7,11 +7,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.elysium.softwork.feedback.presentation.views.chat.AiChatScreen
 import com.elysium.softwork.feedback.presentation.views.surveys.PendingSurveysScreen
+import com.elysium.softwork.feedback.presentation.views.surveys.SurveyStatusScreen
 import com.elysium.softwork.feedback.presentation.views.surveys.TakeSurveyScreen
 import com.elysium.softwork.shared.presentation.navigation.PushEnter
 import com.elysium.softwork.shared.presentation.navigation.PushExit
 import com.elysium.softwork.shared.presentation.navigation.PushPopEnter
 import com.elysium.softwork.shared.presentation.navigation.PushPopExit
+import com.elysium.softwork.shared.utils.values.SurveyStatusType
 
 /**
  * Registers the Feedback routes inside an existing [NavGraphBuilder]. Invoked from the host
@@ -52,8 +54,35 @@ fun NavGraphBuilder.feedbackGraph(navController: NavHostController) {
         TakeSurveyScreen(
             surveyId = surveyId,
             onBack = { navController.popBackStack() },
-            // Pop back to the pending-surveys list once the response is stored (HTTP 201).
-            onSubmitted = { navController.popBackStack() },
+            // Route to the status screen on either terminal outcome (201 success or the
+            // already-answered 400), removing the take-survey entry from the back stack so
+            // "back to surveys" lands on the pending list rather than the filled-out form.
+            onCompleted = { statusType ->
+                navController.navigate(FeedbackRoutes.surveyStatus(statusType.key)) {
+                    popUpTo(FeedbackRoutes.TAKE_SURVEY) { inclusive = true }
+                }
+            },
+        )
+    }
+
+    composable(
+        route = FeedbackRoutes.SURVEY_STATUS,
+        arguments = listOf(
+            navArgument(FeedbackRoutes.ARG_STATUS_TYPE) { type = NavType.StringType },
+        ),
+        enterTransition = PushEnter,
+        exitTransition = PushExit,
+        popEnterTransition = PushPopEnter,
+        popExitTransition = PushPopExit,
+    ) { backStackEntry ->
+        val statusType: SurveyStatusType = SurveyStatusType.fromKey(
+            backStackEntry.arguments?.getString(FeedbackRoutes.ARG_STATUS_TYPE),
+        )
+        SurveyStatusScreen(
+            statusType = statusType,
+            // Pops the status screen; with take-survey already cleared, this lands on the
+            // pending-surveys list.
+            onBack = { navController.popBackStack() },
         )
     }
 

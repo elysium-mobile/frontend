@@ -253,4 +253,9 @@
     <string name="survey_choice_agree">Agree</string>
     <string name="survey_choice_neutral">Neutral</string>
     <string name="survey_choice_disagree">Disagree</string>
+    <string name="survey_status_success_title">Survey submitted successfully!</string>
+    <string name="survey_status_success_subtitle">Thanks for sharing your feedback.</string>
+    <string name="survey_status_already_title">Already answered</string>
+    <string name="survey_status_already_subtitle">You have already submitted your responses for this survey.</string>
+    <string name="survey_status_back_button">Back to surveys</string>
 </resources>

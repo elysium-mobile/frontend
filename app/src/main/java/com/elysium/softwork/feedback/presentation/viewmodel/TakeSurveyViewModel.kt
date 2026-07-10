@@ -10,6 +10,7 @@ import com.elysium.softwork.feedback.application.usecase.SubmitSurveyResponseUse
 import com.elysium.softwork.feedback.domain.model.QuestionSurvey
 import com.elysium.softwork.shared.data.network.BadRequestException
 import com.elysium.softwork.shared.utils.values.SurveyQuestionType
+import com.elysium.softwork.shared.utils.values.SurveyStatusType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,10 +62,18 @@ class TakeSurveyViewModel(
     private val _errorMessage: MutableStateFlow<String?> = MutableStateFlow(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    private val _submitted: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    private val _outcome: MutableStateFlow<SurveyStatusType?> = MutableStateFlow(null)
 
-    /** Flips `true` once a submission is confirmed (HTTP 201); the screen pops on this signal. */
-    val submitted: StateFlow<Boolean> = _submitted.asStateFlow()
+    /**
+     * Terminal submission outcome, `null` until resolved:
+     * - [SurveyStatusType.SUCCESS] on HTTP 201.
+     * - [SurveyStatusType.ALREADY_ANSWERED] when the backend rejects the submission with its
+     *   unique-constraint `400` ("Employee has already submitted a response for this survey.").
+     *
+     * The screen routes to `SurveyStatusScreen` on a non-null value, then calls [consumeOutcome].
+     * Any other failure falls through to [errorMessage] instead (inline banner, no navigation).
+     */
+    val outcome: StateFlow<SurveyStatusType?> = _outcome.asStateFlow()
 
     private var currentSurveyId: Long = 0L
 
@@ -103,7 +112,8 @@ class TakeSurveyViewModel(
     /**
      * Folds the per-question answers into `commentary` / `cause` and submits. No-ops while a
      * submission is in flight or the form is incomplete. On success the form is cleared and
-     * [submitted] flips so the screen can pop.
+     * [outcome] is set (SUCCESS, or ALREADY_ANSWERED on the unique-constraint `400`) so the
+     * screen can route to the status destination.
      */
     fun submit() {
         if (_isSubmitting.value || !isComplete()) return
@@ -127,15 +137,23 @@ class TakeSurveyViewModel(
             submitSurveyResponse(surveyId = currentSurveyId, commentary = commentary, cause = cause)
                 .onSuccess {
                     // HTTP 201 confirmed: invalidate both the captured answers (form input) and
-                    // the loaded question set (question state) before signalling the pop. The
-                    // `submitted` latch drives the navigation pop; the screen gates its empty-state
-                    // on `!submitted` so clearing the questions here never flashes the "no
-                    // questions" placeholder on the outgoing frame.
+                    // the loaded question set (question state) before signalling the route. The
+                    // `outcome` value drives navigation to the status screen; the screen gates its
+                    // empty-state on `outcome == null` so clearing the questions here never flashes
+                    // the "no questions" placeholder on the outgoing frame.
                     _answers.value = emptyMap()
                     _questions.value = emptyList()
-                    _submitted.value = true
+                    _outcome.value = SurveyStatusType.SUCCESS
                 }
-                .onFailure { _errorMessage.value = resolveError(it) }
+                .onFailure { throwable ->
+                    // The backend's unique-constraint 400 is not a generic error: route it to the
+                    // "already answered" status screen instead of surfacing an inline banner.
+                    if (isAlreadySubmitted(throwable)) {
+                        _outcome.value = SurveyStatusType.ALREADY_ANSWERED
+                    } else {
+                        _errorMessage.value = resolveError(throwable)
+                    }
+                }
             _isSubmitting.value = false
         }
     }
@@ -145,9 +163,9 @@ class TakeSurveyViewModel(
         _errorMessage.value = null
     }
 
-    /** Resets the [submitted] latch after the screen has consumed the pop signal. */
-    fun consumeSubmitted() {
-        _submitted.value = false
+    /** Resets the [outcome] signal after the screen has consumed it and navigated. */
+    fun consumeOutcome() {
+        _outcome.value = null
     }
 
     private fun resolveError(throwable: Throwable): String = when (throwable) {
@@ -155,11 +173,31 @@ class TakeSurveyViewModel(
         else -> throwable.message ?: GENERIC_ERROR
     }
 
+    /**
+     * `true` when [throwable] is the backend's unique-constraint rejection for a survey already
+     * answered by this employee. Matches the phrase against both the parsed `field_errors`
+     * (`argument`) message and the top-level `message`, case-insensitively, so a trailing period
+     * or casing change does not defeat the check.
+     */
+    private fun isAlreadySubmitted(throwable: Throwable): Boolean {
+        if (throwable !is BadRequestException) return false
+        val payload = throwable.response
+        return listOfNotNull(payload.primaryFieldError(), payload.message)
+            .any { it.contains(ALREADY_SUBMITTED_PHRASE, ignoreCase = true) }
+    }
+
     companion object {
         private const val GENERIC_ERROR: String = "Unexpected error"
 
         /** Fallback `cause` when a survey has no categorical (rating / choice) questions. */
         private const val DEFAULT_CAUSE: String = "GENERAL"
+
+        /**
+         * Substring of the backend's unique-constraint message ("Employee has already submitted a
+         * response for this survey.") — matched case-insensitively, punctuation-tolerant.
+         */
+        private const val ALREADY_SUBMITTED_PHRASE: String =
+            "already submitted a response for this survey"
 
         /** Factory that assembles the use cases from the application service locator. */
         val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {

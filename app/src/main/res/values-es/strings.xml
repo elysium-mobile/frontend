@@ -253,4 +253,9 @@
     <string name="survey_choice_agree">De acuerdo</string>
     <string name="survey_choice_neutral">Neutral</string>
     <string name="survey_choice_disagree">En desacuerdo</string>
+    <string name="survey_status_success_title">¡Encuesta enviada con éxito!</string>
+    <string name="survey_status_success_subtitle">Gracias por compartir tus comentarios.</string>
+    <string name="survey_status_already_title">Ya respondida</string>
+    <string name="survey_status_already_subtitle">Ya has enviado tus respuestas para esta encuesta.</string>
+    <string name="survey_status_back_button">Volver a encuestas</string>
 </resources>

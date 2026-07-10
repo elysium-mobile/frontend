@@ -14,8 +14,8 @@ package com.elysium.softwork.feedback.domain.model
  * @property survey_response_id primary key returned for a stored submission.
  * @property survey_id target survey (request + response).
  * @property employee_profile_id author profile (request + response).
- * @property submitted_at submission timestamp in the backend's uniform ISO 8601 local pattern
- *   `yyyy-MM-dd'T'HH:mm:ss` — no zone/offset (request + response). Formatted via `DateTimeFormats`.
+ * @property submitted_at submission timestamp as a full ISO 8601 UTC instant (`…THH:mm:ss(.SSS)Z`,
+ *   trailing `Z`) (request + response). Produced via `DateTimeFormats`.
  * @property commentary free-text feedback (request + response).
  * @property cause categorized reason (request + response).
  */
