@@ -93,6 +93,7 @@ spring.datasource.password=${SPRING_DATASOURCE_PASSWORD:postgres}
 server.port=${PORT:8080}
 authorization.jwt.secret=${JWT_SECRET}
 authorization.jwt.expiration.days=${JWT_EXPIRATION_DAYS:7}
+authorization.google.client-id=${GOOGLE_CLIENT_ID}
 swagger.server.url=https://${API_HOST}
 ```
 
@@ -141,6 +142,7 @@ Authorization: Bearer <JWT_TOKEN>    (except public endpoints)
 | `STRIPE_SECRET_KEY` | Stripe | API secret key (`sk_...`) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe | Webhook signing secret (`whsec_...`) |
 | `GOOGLE_GENAI_API_KEY` | Google Gemini | Google GenAI API key |
+| `GOOGLE_CLIENT_ID` | Google Sign-In | OAuth 2.0 Client ID used as the expected `id_token` audience |
 
 See section [11](#11-external-services-cloudinary-stripe-google-gemini) for the full detail of
 these integrations.
@@ -156,7 +158,7 @@ Public endpoints — no token required.
 **Request** (`SignInRequest`):
 ```json
 {
-  "email": "carlos.mendoza@techcorp.pe",
+  "email": "carlos.ramirez@techcorp.pe",
   "password": "password123"
 }
 ```
@@ -165,7 +167,7 @@ Public endpoints — no token required.
 ```json
 {
   "id": 1,
-  "email": "carlos.mendoza@techcorp.pe",
+  "email": "carlos.ramirez@techcorp.pe",
   "token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
@@ -226,6 +228,159 @@ Public endpoints — no token required.
 {
   "id": 9,
   "email": "ana@example.com",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+---
+
+### Sign in with Google (two-phase flow)
+
+Google authentication is split into two phases so that **no user data is ever mocked or hardcoded**:
+
+1. **`POST /google`** validates the Google `id_token` on the backend (`GoogleIdTokenVerifier`,
+   audience = `GOOGLE_CLIENT_ID`). It **persists nothing** for new users — it only reports whether an
+   account already exists for the verified email.
+2. If the account does not exist yet, the frontend shows a role form and calls
+   **`POST /sign-up/employee/google`** or **`POST /sign-up/rrhh/google`** with the **same** `id_token`
+   plus the real profile data. The backend re-validates the token, derives the trusted email from it
+   (never from the request body), creates `User` + `UserAccount` (Google-backed, random password) +
+   the profile, and returns the application JWT.
+
+> On the Google sign-up endpoints the client sends **no** `email`, `password` or `anonymous_name`:
+> the email comes from the verified token, the password is a random BCrypt hash (password login is
+> disabled for Google accounts), and the anonymous name is auto-generated. Every other field is real
+> data entered by the user. See the integration detail in [section 11.5](#115-google-identity--sign-in-with-google-id_token-verification).
+
+---
+
+### POST `/api/v1/authentication/google`
+
+**Phase 1** — validate the Google `id_token` and check whether the account already exists. Creates nothing.
+
+**Request** (`GoogleSignInRequest`):
+```json
+{
+  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6..."
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `id_token` | `idToken` | String | Google Identity Services ID token; validated server-side |
+
+**Response 200 — account already exists** (`GoogleAuthenticationResponse`):
+```json
+{
+  "registered": true,
+  "id": 1,
+  "email": "carlos.ramirez@techcorp.pe",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+**Response 200 — registration required** (`GoogleAuthenticationResponse`):
+```json
+{
+  "registered": false,
+  "id": null,
+  "email": null,
+  "token": null
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `registered` | `registered` | boolean | `true` → session token issued; `false` → must complete sign-up |
+| `id` | `id` | Long | user account id (`null` when not registered) |
+| `email` | `email` | String | account email (`null` when not registered) |
+| `token` | `token` | String | application JWT (`null` when not registered) |
+
+> Returns `200` for any **valid** token (registered or not). An **invalid/expired** token, or an
+> audience that does not match `GOOGLE_CLIENT_ID`, raises `IllegalArgumentException` → `400 Bad Request`.
+
+---
+
+### POST `/api/v1/authentication/sign-up/employee/google`
+
+**Phase 2 (employee)** — complete registration for a Google-authenticated user and open a session.
+
+**Request** (`GoogleEmployeeSignUpRequest`):
+```json
+{
+  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6...",
+  "name": "Juan",
+  "last_name": "Perez",
+  "phone_number": "987654321",
+  "dni": "12345678",
+  "date_start": "2026-01-15",
+  "position": "Backend Developer",
+  "salary": 5000
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `id_token` | `idToken` | String | @NotNull @NotBlank | re-validated; the account email is derived from it |
+| `name` | `name` | String | @NotNull @NotBlank | |
+| `last_name` | `lastName` | String | @NotNull @NotBlank | |
+| `phone_number` | `phoneNumber` | String | @NotNull @NotBlank | |
+| `dni` | `dni` | String | @NotNull @NotBlank | 8 chars |
+| `date_start` | `dateStart` | Date | @NotNull | |
+| `position` | `position` | String | @NotNull @NotBlank | |
+| `salary` | `salary` | Integer | @NotNull | |
+
+> No `email`, `password` or `anonymous_name` in the request — see the note above.
+
+**Response 201** (`AuthenticatedUserAccountResponse`):
+```json
+{
+  "id": 9,
+  "email": "juan@gmail.com",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+> `400 Bad Request` if the email already has an account (`"Email already exists"`) or the token is invalid.
+
+---
+
+### POST `/api/v1/authentication/sign-up/rrhh/google`
+
+**Phase 2 (RRHH)** — same as above but creates an RRHH profile.
+
+**Request** (`GoogleRRHHSignUpRequest`):
+```json
+{
+  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6...",
+  "name": "Ana",
+  "last_name": "Garcia",
+  "phone_number": "999888777",
+  "dni": "87654321",
+  "rrhhdepartment": "Human Resources",
+  "status_hierarchy": "Manager"
+}
+```
+
+> **Note**: the key is `rrhhdepartment` (no underscore) because the Java field is `RRHHDepartment`
+> and Jackson's `SnakeCaseStrategy` does not split consecutive capitals — same quirk as the classic
+> `/sign-up/rrhh`.
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `id_token` | `idToken` | String | @NotNull @NotBlank |
+| `name` | `name` | String | @NotNull @NotBlank |
+| `last_name` | `lastName` | String | @NotNull @NotBlank |
+| `phone_number` | `phoneNumber` | String | @NotNull @NotBlank |
+| `dni` | `dni` | String | @NotNull @NotBlank |
+| `rrhhdepartment` | `RRHHDepartment` | String | @NotNull @NotBlank |
+| `status_hierarchy` | `statusHierarchy` | String | @NotNull @NotBlank |
+
+**Response 201** (`AuthenticatedUserAccountResponse`):
+```json
+{
+  "id": 9,
+  "email": "ana@gmail.com",
   "token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
@@ -1740,6 +1895,7 @@ JSON. The error response records (`BadRequestResponse`, `NotFoundResponse`,
 | Cloudinary | `com.cloudinary:cloudinary-taglib` | `2.0.0` | Additional Cloudinary utilities |
 | Stripe | `com.stripe:stripe-java` | `26.3.0` | Official Stripe SDK for Java |
 | Spring AI | `org.springframework.ai:spring-ai-starter-model-google-genai` | BOM `2.0.0` | Integration with Gemini models via Spring AI |
+| Google API Client | `com.google.api-client:google-api-client` | `2.9.0` | Verify Google Sign-In `id_token` (`GoogleIdTokenVerifier`) |
 
 ---
 
@@ -2111,28 +2267,121 @@ public AssistantAnswer handle(AskFeedbackAssistantCommand command) {
 | `FeedbackAssistantController` | `/api/v1/feedback-assistant` | Feedback | AI assistant (Gemini) for surveys |
 
 The `AssetController` (`/api/v1/assets`) already existed, but its `POST` endpoint changed from a
-JSON DTO to `multipart/form-data` to integrate with Cloudinary.
+JSON DTO to `multipart/form-data` to integrate with Cloudinary. The `AuthenticationController`
+(`/api/v1/authentication`) also gained three Google endpoints — see [section 11.5](#115-google-identity--sign-in-with-google-id_token-verification).
+
+---
+
+### 11.5 Google Identity — Sign in with Google (id_token verification)
+
+Backend verification of Google Identity Services **ID tokens** for the IAM authentication flow.
+
+**Dependency**: `com.google.api-client:google-api-client:2.9.0`.
+
+**Configuration** (`application-*.properties`):
+```properties
+authorization.google.client-id=${GOOGLE_CLIENT_ID:WriteHereYourGoogleOAuthClientId}   # dev has a placeholder default
+authorization.google.client-id=${GOOGLE_CLIENT_ID}                                     # prod (mandatory)
+```
+
+**Verification** (`GoogleTokenServiceImpl`, `iam.infrastructure.google.services`): builds a
+`GoogleIdTokenVerifier` with `NetHttpTransport` + `GsonFactory`, restricted to the configured client
+id as the expected audience:
+```java
+new GoogleIdTokenVerifier.Builder(new NetHttpTransport(), GsonFactory.getDefaultInstance())
+    .setAudience(Collections.singletonList(clientId))
+    .build();
+```
+`verifier.verify(idToken)` checks the token signature (against Google's public certificates),
+expiration and audience; the adapter additionally requires `email_verified == true`. On failure it
+throws `IllegalArgumentException` → `400 Bad Request`. The verified claims (`sub`, `email`,
+`given_name`, `family_name`) are exposed to the application layer as a `GoogleUserInfo`.
+
+**Exposed endpoints** (documented in [section 2](#2-authentication-iam)):
+
+| Route | Phase | Persists |
+|---|---|---|
+| `POST /api/v1/authentication/google` | 1 — validate + check existence | **nothing** |
+| `POST /api/v1/authentication/sign-up/employee/google` | 2 — employee completion | User + UserAccount + EmployeeProfile |
+| `POST /api/v1/authentication/sign-up/rrhh/google` | 2 — RRHH completion | User + UserAccount + RRHHProfile |
+
+> **No local account is created on `/google`.** The `User` + `UserAccount` are created only when the
+> user completes one of the Google sign-up endpoints, with real data and a random encoded password
+> (Google is the only login path for those accounts; `membership_id`/`company_id` default to `0`,
+> matching the classic sign-up).
 
 ---
 
 ## 12. Seed Data
 
-When started with the `dev` profile, `data.sql` inserts:
+### How the seed runs
 
-### Test Credentials
+`application-dev.properties` (and `-prod`) enable SQL init, so `classpath:data.sql` runs on **every**
+startup:
+```properties
+spring.sql.init.mode=always
+spring.sql.init.data-locations=classpath:data.sql
+spring.jpa.defer-datasource-initialization=true
+spring.sql.init.continue-on-error=true
+```
+- Rows are inserted with **explicit IDs** (`1..N`). After the inserts, the script runs
+  `SELECT setval('<table>_id_seq', (SELECT MAX(id) FROM <table>))` for every table, so
+  auto-generated IDs continue after the seeded ones.
+- `continue-on-error=true` means a failing statement (e.g. rows already present from a previous run)
+  is logged and skipped rather than aborting startup.
 
-All accounts use the password `password123` (BCrypt hash).
+> **Passwords**: the 8 accounts are stored as **BCrypt hashes** (`$2b$10$…`) directly in `data.sql`.
+> The sign-in examples in this document use `password123` as the conventional test password.
 
-| Email | Role | Company |
-|---|---|---|
-| `carlos.mendoza@techcorp.pe` | Employee (Backend Dev) | TechCorp SAC |
-| `maria.lopez@techcorp.pe` | Employee (Frontend Dev) | TechCorp SAC |
-| `pedro.garcia@techcorp.pe` | Employee (QA) | TechCorp SAC |
-| `ana.martinez@techcorp.pe` | Employee (PM) | TechCorp SAC |
-| `luis.rodriguez@innovateperu.pe` | Employee (Data Analyst) | InnovatePeru SRL |
-| `sofia.hernandez@innovateperu.pe` | Employee (DevOps) | InnovatePeru SRL |
-| `diego.ramirez@innovateperu.pe` | Employee (Tech Lead) | InnovatePeru SRL |
-| `valentina.torres@innovateperu.pe` | Employee (Junior Dev) | InnovatePeru SRL |
+### Seeded User Accounts (`users` + `user_accounts`)
+
+| id | email | Full name | Company | `membership_id` | `anonymous_name` | Profiles |
+|---|---|---|---|---|---|---|
+| 1 | `carlos.ramirez@techcorp.pe` | Carlos Ramirez | TechCorp SAC (1) | 1 · ACTIVE | `CRamz` | Employee #1 (Backend Developer) **+** RRHH #1 (Senior HR Manager) |
+| 2 | `maria.lopez@techcorp.pe` | Maria Lopez | TechCorp SAC (1) | 1 · ACTIVE | `MariLop` | Employee #2 (Frontend Developer) |
+| 3 | `jorge.quispe@techcorp.pe` | Jorge Quispe | TechCorp SAC (1) | 1 · ACTIVE | `JQuispe` | Employee #3 (QA Engineer) |
+| 4 | `ana.torres@innovateperu.com` | Ana Torres | InnovatePeru SRL (2) | 2 · ACTIVE | `AnaTor` | Employee #4 (Product Manager) **+** RRHH #2 (HR Coordinator) |
+| 5 | `luis.mamani@innovateperu.com` | Luis Mamani | InnovatePeru SRL (2) | 2 · ACTIVE | `LuisMam` | Employee #5 (Data Analyst) |
+| 6 | `sofia.vargas@innovateperu.com` | Sofia Vargas | InnovatePeru SRL (2) | 2 · ACTIVE | `SofiVar` | Employee #6 (DevOps Engineer) |
+| 7 | `diego.chavez@techcorp.pe` | Diego Chavez | TechCorp SAC (1) | 1 · ACTIVE | `DiegoC` | Employee #7 (Tech Lead) |
+| 8 | `valeria.mendoza@techcorp.pe` | Valeria Mendoza | TechCorp SAC (1) | 3 · PENDING | `ValMen` | Employee #8 (Junior Developer) |
+
+### Seeded Companies & Memberships
+
+| Company id | Name | RUC | Employees (`user_account` ids) |
+|---|---|---|---|
+| 1 | TechCorp SAC | `20123456781` | 1, 2, 3, 7, 8 |
+| 2 | InnovatePeru SRL | `20987654322` | 4, 5, 6 |
+
+| Membership id | Start | Over | Status |
+|---|---|---|---|
+| 1 | 2024-01-01 | 2025-01-01 | `ACTIVE` |
+| 2 | 2024-03-01 | 2025-03-01 | `ACTIVE` |
+| 3 | 2024-06-01 | 2024-12-01 | `PENDING` |
+
+### Payments (useful for Stripe retry/refund testing)
+
+| Payment id | Order id | Status | Note |
+|---|---|---|---|
+| 1 | 1 | `SUCCEEDED` | eligible for **refund** (`/payments/stripe/{1}/refund`) |
+| 2 | 2 | `PENDING` | — |
+| 3 | 3 | `FAILED` | eligible for **retry** (`/payments/stripe/{3}/retry`) |
+
+### Row counts per table (as inserted by `data.sql`)
+
+| Bounded Context | Tables (rows) |
+|---|---|
+| IAM | `users` (8), `user_accounts` (8), `employee_profiles` (8), `rrhh_profiles` (2) |
+| Dashboard | `companies` (2), `dashboards` (2), `widgets` (4), `area_companies` (4), `unit_of_works` (5), `work_teams` (5) |
+| Payment | `memberships` (3), `membership_plans` (3), `benefits` (6), `orders` (3), `payments` (3) |
+| Worker Forum | `forums` (2), `categories` (4), `threads` (4), `messages` (7), `assets` (4 → 3 PDF + 1 VIDEO), `reports` (8) |
+| Notification | `notifications` (6), `notification_details` (6) |
+| Feedback | `surveys` (3), `questions_surveys` (5), `answers` (5), `survey_responses` (5) |
+| Profile Performance | `performances` (5), `comments_employees` (5) |
+
+> **Asset URLs are placeholders** (`https://storage.softwork.pe/assets/...`) — the seed does not
+> upload to Cloudinary, so those files do not physically exist; real assets are created through
+> `POST /api/v1/assets`.
 
 ### Full Flow Example (including Stripe and AI)
 
@@ -2142,7 +2391,7 @@ BASE=http://localhost:8092
 # 1. Authenticate
 curl -X POST $BASE/api/v1/authentication/sign-in \
   -H "Content-Type: application/json" \
-  -d '{"email":"carlos.mendoza@techcorp.pe","password":"password123"}'
+  -d '{"email":"carlos.ramirez@techcorp.pe","password":"password123"}'
 
 TOKEN="eyJhbGciOiJIUzI1NiIs..."
 
@@ -2172,6 +2421,26 @@ curl -X POST $BASE/api/v1/feedback-assistant \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"survey_id":1,"prompt":"Suggest 3 questions about teamwork"}'
+```
+
+### Sign in with Google — two-phase example
+
+```bash
+BASE=http://localhost:8092
+ID_TOKEN="<google_id_token_from_the_frontend>"
+
+# Phase 1 — validate the token and check whether the account exists (creates nothing)
+curl -X POST $BASE/api/v1/authentication/google \
+  -H "Content-Type: application/json" \
+  -d "{\"id_token\":\"$ID_TOKEN\"}"
+# → { "registered": true,  "id": 1, "email": "...", "token": "..." }   → already registered, done
+# → { "registered": false, "id": null, ... }                          → go to Phase 2
+
+# Phase 2 (only if registered:false) — complete the profile with the SAME id_token
+curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
+  -H "Content-Type: application/json" \
+  -d "{\"id_token\":\"$ID_TOKEN\",\"name\":\"Juan\",\"last_name\":\"Perez\",\"phone_number\":\"987654321\",\"dni\":\"12345678\",\"date_start\":\"2026-01-15\",\"position\":\"Backend Developer\",\"salary\":5000}"
+# → 201 { "id": 9, "email": "<from the verified token>", "token": "eyJhbGci..." }
 ```
 
 ---
@@ -2235,7 +2504,7 @@ curl -X POST $BASE/api/v1/feedback-assistant \
 
 | Bounded Context | Base Route | Note |
 |---|---|---|
-| Auth | `/api/v1/authentication` | Public |
+| Auth | `/api/v1/authentication` | Public — sign-in, sign-up (employee/rrhh), Google sign-in + Google sign-up |
 | Users | `/api/v1/users` | |
 | User Accounts | `/api/v1/user_accounts` | underscore, no hyphen |
 | Employee Profile | `/api/v1/employee-profile` | **singular** |
@@ -2288,6 +2557,9 @@ curl -X POST $BASE/api/v1/feedback-assistant \
 
 | Route | Method | Auth | Content-Type | Purpose |
 |---|---|---|---|---|
+| `/api/v1/authentication/google` | POST | Public | `application/json` | Validate Google `id_token` (phase 1 — creates nothing) |
+| `/api/v1/authentication/sign-up/employee/google` | POST | Public | `application/json` | Complete Google employee sign-up (phase 2) |
+| `/api/v1/authentication/sign-up/rrhh/google` | POST | Public | `application/json` | Complete Google RRHH sign-up (phase 2) |
 | `/api/v1/assets` | POST | JWT | `multipart/form-data` | Upload file to Cloudinary + create Asset |
 | `/api/v1/payments/stripe/checkout` | POST | JWT | `application/json` | Create a Stripe PaymentIntent |
 | `/api/v1/payments/stripe/{paymentId}/retry` | POST | JWT | `application/json` | Retry a failed payment |
