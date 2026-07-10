@@ -12,10 +12,14 @@ package com.elysium.softwork.worker.forum.domain.model
  * @property title category headline.
  * @property description category description.
  * @property forum_id owning forum (request + response).
+ * @property threads response-only nested threads (`CategoryResponse.threads`). `null` on the
+ *   request; Gson populates it on the response so the feed can flatten a company's threads without
+ *   a second round-trip.
  */
 data class Category(
     val category_id: Long? = null,
     val title: String? = null,
     val description: String? = null,
     val forum_id: Long? = null,
+    val threads: List<Thread>? = null,
 )

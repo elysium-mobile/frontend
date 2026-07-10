@@ -23,23 +23,46 @@ import retrofit2.Response
  * Messages are filtered client-side by `thread_id` because the backend exposes only the
  * unfiltered `GET /messages` list.
  *
+ * **Organizational isolation.** The feed refresh drives `GET /api/v1/forums` (whose
+ * `ForumResponse` nests `categories → threads`) rather than the flat, cross-tenant
+ * `GET /api/v1/threads`. Forums are filtered to the signed-in worker's company via
+ * [companyIdProvider] (`SharedPrefsManager.KEY_COMPANY_ID`) **before** anything reaches the cache,
+ * and the cache is then *replaced* (not merged) so no other organization's threads can linger.
+ *
  * @param threadDao Room DAO for the cached threads.
  * @param messageDao Room DAO for the cached messages.
  * @param webService Retrofit contract for the forum endpoints.
  * @param gson deserializer for the structured `400` validation payload.
+ * @param companyIdProvider supplies the signed-in worker's `company_id` (cached during the
+ *   post-login `user_accounts` sync); read per refresh. `null` ⇒ no org resolved ⇒ empty feed.
  */
 class ForumStoreImpl(
     private val threadDao: ThreadDao,
     private val messageDao: MessageDao,
     private val webService: ForumWebService,
     private val gson: Gson,
+    private val companyIdProvider: () -> Long?,
 ) : ForumStore {
 
     override fun observeThreads(): Flow<List<Thread>> = threadDao.observeThreads()
 
     override suspend fun refreshThreads(): Result<Unit> = runCatching {
-        val threads = unwrapList(webService.getThreads())
-        if (threads.isNotEmpty()) threadDao.upsertAll(threads)
+        val forums = unwrapList(webService.getForums())
+        val companyId: Long? = companyIdProvider()
+        // Company-scoped flatten: keep only forums owned by the worker's org, then descend
+        // categories → threads. A null company (not yet synced) yields an empty feed rather than
+        // leaking cross-tenant assets. `replaceAll` swaps the whole cache atomically so any
+        // previously-cached foreign threads are purged.
+        val orgThreads: List<Thread> = if (companyId == null) {
+            emptyList()
+        } else {
+            forums.asSequence()
+                .filter { it.company_id == companyId }
+                .flatMap { forum -> forum.categories.orEmpty().asSequence() }
+                .flatMap { category -> category.threads.orEmpty().asSequence() }
+                .toList()
+        }
+        threadDao.replaceAll(orgThreads)
     }
 
     override suspend fun getThread(threadId: Long): Thread? = threadDao.getById(threadId)

@@ -57,7 +57,7 @@
     <string name="home_report_incident">My reports</string>
     <string name="home_report_incident_subtitle">Track the status of your reports</string>
     <string name="home_internal_forums">Internal forums</string>
-    <string name="home_internal_forums_subtitle">12 active conversations</string>
+    <string name="home_internal_forums_subtitle">%1$d active conversations</string>
     <string name="home_ai_assistant">AI Assistant</string>
     <string name="home_ai_assistant_subtitle">Available 24/7</string>
     <string name="home_surveys">Surveys</string>
@@ -107,6 +107,7 @@
     <string name="forum_category_conflicts">#Conflicts</string>
     <string name="forum_anonymous_author">Anonymous</string>
     <string name="forum_replies_count">💬 %1$d</string>
+    <string name="forum_empty">No forums are available for your organization yet.</string>
     <string name="forum_message_author">User #%1$d</string>
     <string name="forum_new_post">New post</string>
     <string name="forum_new_post_publish">Publish</string>

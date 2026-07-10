@@ -1437,6 +1437,52 @@ coupling, no re-fetch:
   (the reply body itself arrives via the `observeMessages` stream).
 - `ForumViewModel` is **unchanged** — the Room flow it already collects is the sync channel.
 
+#### Phase 12 addendum — company-scoped forum feed (organizational isolation)
+
+The feed refresh switched from the flat, cross-tenant `GET /api/v1/threads` to the hierarchical
+`GET /api/v1/forums`, filtered to the signed-in worker's company so no other org's assets ever
+reach the viewport:
+
+- **Beans**: `Forum` gained a response-only nested `categories: List<Category>?`, and `Category`
+  a nested `threads: List<Thread>?` (plain nullable props — neither is a Room entity; Gson populates
+  them by reflection from `ForumResponse.categories[].threads`). Null on requests, dropped by Gson.
+- **`ForumStoreImpl.refreshThreads`** now takes a `companyIdProvider: () -> Long?` (wired in
+  `ServiceLocator` to `SharedPrefsManager.KEY_COMPANY_ID`, cached during the Phase-9 `user_accounts`
+  sync). It fetches `/forums`, keeps only `forum.company_id == companyId`, flattens
+  categories → threads, and calls the new `ThreadDao.replaceAll(...)` (a `@Transaction` clear +
+  insert) so the cache holds **exactly** the org's threads — atomically, purging any cross-tenant
+  rows a prior unfiltered fetch cached, with no empty-then-full flicker. A `null` company (not yet
+  synced) ⇒ empty feed rather than a cross-tenant leak.
+- **`ForumScreen`** renders a centered `forum_empty` fallback when the feed is empty (new string,
+  both locales) instead of a blank list.
+- `ForumViewModel` is again **unchanged** — it observes `observeThreads()`, which now only ever
+  emits the org-scoped cache. `ForumWebService.getThreads()` is now unused (prunable).
+- **`HomeScreen`** shows the **live company thread count** in the "Internal forums" action-card
+  subtitle (`home_internal_forums_subtitle` = `"%1$d active conversations"`), sourced from
+  `threads.size` by reusing `ForumViewModel` (`viewModel(factory = ForumViewModel.Factory)`, scoped
+  to the HOME nav entry — a distinct instance from the feed's, sharing the same org-scoped Room
+  cache). No preview list and no per-thread navigation from Home — just the count.
+
+#### Phase 12 addendum — per-user report scoping (`ReportsStatusScreen`)
+
+`GET /api/v1/reports` is a system-wide unfiltered list, so `GetForumReportsUseCase` now takes an
+`accountIdProvider: () -> Long?` (wired in `ReportsStatusViewModel.Factory` to
+`SharedPrefsManager.KEY_USER_ACCOUNT_ID`) and filters the response to `report.user_account_id ==
+accountId` before it reaches `UiState.Ready` — client-side privacy scoping so a worker sees only
+their own tickets. A `null` account id ⇒ empty list (no cross-user leak); an empty result renders
+the screen's existing `EmptyState`. Same `accountIdProvider` seam as `GetNotificationsUseCase`.
+
+#### Phase 12 addendum — forum-feed pull-to-refresh
+
+`ForumScreen` wraps its feed in a Material 3 `PullToRefreshBox` (`@OptIn(ExperimentalMaterial3Api::class)`
+on the screen composable). A pull-down calls `ForumViewModel.refresh()` — the same company-scoped
+`GET /api/v1/forums` path used on init (re-applies the `company_id == KEY_COMPANY_ID` filter in the
+store) — gated by a new `isRefreshing: StateFlow<Boolean>` (re-entrancy-guarded; flag dropped in a
+`finally` so the wheel always retracts). The feed renders through a single `LazyColumn` in both
+states — the empty fallback is a `fillParentMaxSize` item — so the pull gesture always has a
+scrollable child, even when the org has no threads. `refresh()` remains the init-load path too, so
+the indicator also shows briefly on cold mount.
+
 The `payment.membership` context now talks to the real payment-service API. The mock
 `PlanCatalogue`, the `MOCK_PAYMENT_DELAY_MS`, and the fake in-memory plan list are deleted.
 The local membership **gate** (`hasMembership` / `currentPlanKey`, backed by `SharedPrefsManager`)

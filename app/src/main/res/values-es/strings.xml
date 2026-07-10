@@ -57,7 +57,7 @@
     <string name="home_report_incident">Mis denuncias</string>
     <string name="home_report_incident_subtitle">Consulta el estado de tus denuncias</string>
     <string name="home_internal_forums">Foros internos</string>
-    <string name="home_internal_forums_subtitle">12 conversaciones activas</string>
+    <string name="home_internal_forums_subtitle">%1$d conversaciones activas</string>
     <string name="home_ai_assistant">Asistente de IA</string>
     <string name="home_ai_assistant_subtitle">Disponible 24/7</string>
     <string name="home_surveys">Encuestas</string>
@@ -107,6 +107,7 @@
     <string name="forum_category_conflicts">#Conflictos</string>
     <string name="forum_anonymous_author">Anónimo</string>
     <string name="forum_replies_count">💬 %1$d</string>
+    <string name="forum_empty">Aún no hay foros disponibles para tu organización.</string>
     <string name="forum_message_author">Usuario #%1$d</string>
     <string name="forum_new_post">Nueva publicación</string>
     <string name="forum_new_post_publish">Publicar</string>

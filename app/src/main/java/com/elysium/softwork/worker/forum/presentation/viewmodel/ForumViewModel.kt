@@ -48,14 +48,33 @@ class ForumViewModel(
     /** Latest backend validation / load error, or `null` when none. */
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    private val _isRefreshing: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    /**
+     * `true` while a feed refresh is in flight. Bound to `ForumScreen`'s `PullToRefreshBox`
+     * indicator; flipped back to `false` in a `finally` so the wheel always retracts, even on a
+     * transport failure. Re-entrancy-guarded so overlapping pulls collapse into one round-trip.
+     */
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     init {
         refresh()
     }
 
-    /** Pull-to-refresh hook for the feed. */
+    /**
+     * Pull-to-refresh hook for the feed. Re-fetches `GET /api/v1/forums` and re-applies the
+     * company filter (`company_id == KEY_COMPANY_ID`) inside the store before the org-scoped
+     * cache re-emits. Also invoked once on construction for the initial load.
+     */
     fun refresh() {
+        if (_isRefreshing.value) return
         viewModelScope.launch {
-            refreshThreads().onFailure { throwable -> _errorMessage.value = resolveError(throwable) }
+            _isRefreshing.value = true
+            try {
+                refreshThreads().onFailure { throwable -> _errorMessage.value = resolveError(throwable) }
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 

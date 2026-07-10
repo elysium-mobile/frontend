@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -27,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,10 +51,15 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * a last-activity date, so the card shows those — the former author / anonymity / category /
  * body-snippet are not part of the thread payload.
  *
+ * The feed is wrapped in a Material 3 [PullToRefreshBox]: a pull-down calls
+ * [ForumViewModel.refresh] (re-fetches `GET /api/v1/forums` and re-applies the company filter),
+ * with the top indicator driven by `ForumViewModel.isRefreshing`.
+ *
  * @param onNewPost handler for the "+" FAB tap.
  * @param onOpenThread handler invoked with the thread id when a card is tapped.
  * @param onReportPost handler for reporting a thread directly from the feed.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForumScreen(
     onNewPost: () -> Unit,
@@ -62,6 +70,7 @@ fun ForumScreen(
 ) {
     val threads: List<Thread> by viewModel.threads.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val isRefreshing: Boolean by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -78,19 +87,37 @@ fun ForumScreen(
                 )
             }
 
-            LazyColumn(
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = viewModel::refresh,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
+                    .weight(1f)
+                    .fillMaxWidth(),
             ) {
-                items(items = threads, key = { it.thread_id }) { thread ->
-                    ThreadCard(
-                        thread = thread,
-                        onClick = { onOpenThread(thread.thread_id) },
-                        onReport = { onReportPost(thread.thread_id) },
-                    )
+                // A single LazyColumn hosts both states so the pull gesture always has a
+                // scrollable child to attach to. When empty, a viewport-filling item shows the
+                // graceful fallback (never cross-tenant content — the company-scoped refresh
+                // caches only the worker's org threads) while staying pullable.
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
+                ) {
+                    if (threads.isEmpty()) {
+                        item(key = "empty") {
+                            ForumEmptyState(modifier = Modifier.fillParentMaxSize())
+                        }
+                    } else {
+                        items(items = threads, key = { it.thread_id }) { thread ->
+                            ThreadCard(
+                                thread = thread,
+                                onClick = { onOpenThread(thread.thread_id) },
+                                onReport = { onReportPost(thread.thread_id) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -112,6 +139,22 @@ private fun FeedHeader() {
         color = PrimaryNavy,
         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
     )
+}
+
+@Composable
+private fun ForumEmptyState(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(horizontal = 32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(R.string.forum_empty),
+            color = AccentDark,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+        )
+    }
 }
 
 @Composable

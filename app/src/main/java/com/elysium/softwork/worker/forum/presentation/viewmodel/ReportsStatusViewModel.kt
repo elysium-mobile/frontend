@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.elysium.softwork.SoftWorkApplication
+import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.worker.forum.application.usecase.GetForumReportsUseCase
 import com.elysium.softwork.worker.forum.domain.model.Report
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,8 +60,16 @@ class ReportsStatusViewModel(
             override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
                 val app = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
                     as SoftWorkApplication
+                val locator = app.serviceLocator
                 return ReportsStatusViewModel(
-                    getForumReports = GetForumReportsUseCase(app.serviceLocator.forumReportStore),
+                    getForumReports = GetForumReportsUseCase(
+                        store = locator.forumReportStore,
+                        accountIdProvider = {
+                            locator.sharedPrefsManager
+                                .getLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID)
+                                .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+                        },
+                    ),
                 ) as T
             }
         }

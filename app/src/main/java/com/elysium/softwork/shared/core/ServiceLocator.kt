@@ -87,6 +87,11 @@ class ServiceLocator(context: Context) {
             messageDao = forumDatabase.messageDao(),
             webService = forumWebService,
             gson = gson,
+            companyIdProvider = {
+                sharedPrefsManager
+                    .getLong(SharedPrefsManager.KEY_COMPANY_ID)
+                    .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+            },
         )
     }
 

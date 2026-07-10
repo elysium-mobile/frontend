@@ -34,9 +34,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elysium.softwork.R
 import com.elysium.softwork.shared.presentation.components.InitialsAvatar
 import com.elysium.softwork.shared.presentation.components.SoftWorkCard
+import com.elysium.softwork.worker.forum.domain.model.Thread
+import com.elysium.softwork.worker.forum.presentation.viewmodel.ForumViewModel
 import com.elysium.softwork.shared.presentation.theme.AccentDark
 import com.elysium.softwork.shared.presentation.theme.AccentMint
 import com.elysium.softwork.shared.presentation.theme.AccentWhite
@@ -52,12 +56,17 @@ import com.elysium.softwork.shared.presentation.theme.Danger
  * Wires action callbacks rather than navigating directly so that the parent navigation host
  * decides where each card leads — keeps the screen testable in isolation.
  *
+ * The "Internal forums" card subtitle shows the **live count** of the company's forum threads,
+ * sourced from [ForumViewModel] — whose `threads` flow is already scoped to the signed-in worker's
+ * organization (company-filtered `GET /api/v1/forums`), so no additional filtering is needed here.
+ *
  * @param userName name shown in the greeting and used to derive the avatar initials.
  * @param onReportIncident handler for the Report-incident card.
  * @param onOpenForums handler for the Internal-forums card.
  * @param onOpenAssistant handler for the AI-assistant card.
  * @param onOpenSurveys handler for the Surveys card.
  * @param onOpenMembership handler for the Membership card.
+ * @param forumViewModel supplies the company-scoped thread feed; defaulted to the locator factory.
  */
 @Composable
 fun HomeScreen(
@@ -68,7 +77,10 @@ fun HomeScreen(
     onOpenSurveys: () -> Unit,
     onOpenMembership: () -> Unit,
     modifier: Modifier = Modifier,
+    forumViewModel: ForumViewModel = viewModel(factory = ForumViewModel.Factory),
 ) {
+    val threads: List<Thread> by forumViewModel.threads.collectAsStateWithLifecycle()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -100,7 +112,7 @@ fun HomeScreen(
             iconRes = R.drawable.ic_people,
             iconContentDescription = stringResource(R.string.cd_people),
             title = stringResource(R.string.home_internal_forums),
-            subtitle = stringResource(R.string.home_internal_forums_subtitle),
+            subtitle = stringResource(R.string.home_internal_forums_subtitle, threads.size),
             onClick = onOpenForums,
         )
 
