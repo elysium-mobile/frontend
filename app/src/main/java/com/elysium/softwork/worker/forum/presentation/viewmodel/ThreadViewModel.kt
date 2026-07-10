@@ -102,7 +102,17 @@ class ThreadViewModel(
     fun sendMessage(content: String) {
         if (content.isBlank() || currentThreadId == 0L) return
         viewModelScope.launch {
-            postMessage(currentThreadId, content).onFailure { _errorMessage.value = resolveError(it) }
+            postMessage(currentThreadId, content)
+                .onSuccess {
+                    // The reply itself streams into `messages` via observeMessages(threadId) once
+                    // the store caches it. Here we only bump the one-shot-loaded header so the
+                    // thread's reply counter reflects the new message instantly on this screen —
+                    // the store bumps the same count in the shared cache for the feed.
+                    _thread.value = _thread.value?.let { current ->
+                        current.copy(message_count = (current.message_count ?: 0) + 1)
+                    }
+                }
+                .onFailure { _errorMessage.value = resolveError(it) }
         }
     }
 

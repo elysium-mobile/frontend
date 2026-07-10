@@ -74,6 +74,16 @@ class ForumStoreImpl(
     override suspend fun postMessage(message: Message): Result<Message> = runCatching {
         val created = unwrap(webService.createMessage(message))
         messageDao.upsert(created)
+        // Live count sync: bump the owning thread's cached `message_count` so `observeThreads()`
+        // re-emits and the feed's counter updates without a network re-fetch. The shared Room
+        // cache is the single source both the feed (`ForumScreen`) and the per-thread message
+        // stream (`ThreadScreen`) observe, so one write reconciles both viewports.
+        val threadId: Long? = created.thread_id ?: message.thread_id
+        if (threadId != null) {
+            threadDao.getById(threadId)?.let { thread ->
+                threadDao.upsert(thread.copy(message_count = (thread.message_count ?: 0) + 1))
+            }
+        }
         created
     }
 
