@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elysium.softwork.R
 import com.elysium.softwork.iam.application.AuthState
 import com.elysium.softwork.iam.presentation.viewmodel.AuthViewModel
+import com.elysium.softwork.iam.presentation.components.AuthLoadingOverlay
 import com.elysium.softwork.iam.presentation.components.BackTopBar
 import com.elysium.softwork.shared.utils.discriminators.ButtonVariant
 import com.elysium.softwork.shared.presentation.components.SoftWorkButton
@@ -69,6 +70,11 @@ fun RegisterGoogleScreen(
             else -> Unit
         }
     }
+
+    // Non-dismissible spinner covering the Google Phase 2 profile-creation round-trip
+    // (`POST /authentication/sign-up/employee/google`). Stays up through submission so control
+    // passes to the host's membership-resolution loader without an idle frame on the form.
+    if (state is AuthState.Loading) AuthLoadingOverlay()
 
     Column(
         modifier = modifier

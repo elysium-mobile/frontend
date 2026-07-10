@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elysium.softwork.R
 import com.elysium.softwork.iam.application.AuthState
 import com.elysium.softwork.iam.presentation.viewmodel.AuthViewModel
+import com.elysium.softwork.iam.presentation.components.AuthLoadingOverlay
 import com.elysium.softwork.iam.presentation.components.GoogleOutlineButton
 import com.elysium.softwork.iam.presentation.components.PasswordVisibilityToggle
 import com.elysium.softwork.shared.utils.discriminators.ButtonVariant
@@ -100,6 +101,12 @@ fun LoginScreen(
             else -> Unit
         }
     }
+
+    // Non-dismissible spinner covering the network round-trip of standard sign-in and Google
+    // Phase 1 (`POST /authentication/google`). It also blocks a second submission while the
+    // request is in flight, and stays up until the state resolves — so after a successful login
+    // control passes straight to the host's membership-resolution loader with no idle frame.
+    if (state is AuthState.Loading) AuthLoadingOverlay()
 
     // Inset consumption strategy for the login form:
     //  - `WindowInsets.systemBars.union(WindowInsets.ime)` produces a per-edge max of the

@@ -4,7 +4,9 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -14,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -146,12 +149,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Membership-resolution gate. Guards against the payment-onboarding flicker: without it,
+        // the instant `isAuthenticated` flips true the `when` below would evaluate against the
+        // *stale* local `hasMembership` flag (false for a fresh login) and mount
+        // `PaymentOnboardingHost` for a frame, before the async validation confirms an active
+        // subscription and swaps to the main shell. `membershipChecked` starts false and only
+        // becomes true once `validateMembershipUseCase()` has synced the gate from the server —
+        // until then the routing is held on a neutral loader (see the `when`), never on payment.
+        // Deliberately a plain `remember` (not `rememberSaveable`): a fresh composition — cold
+        // start or Activity recreation — must re-validate against the server rather than trust a
+        // restored flag, so the gate is authoritative every time.
+        var membershipChecked: Boolean by remember { mutableStateOf(false) }
+
         // Session-authorization membership check: on cold-start and immediately after login,
         // validate the worker's subscription (cached `membership_id` → GET /memberships/{id},
-        // status + validity window). The use case syncs the reactive `hasMembership` gate, so a
-        // non-active subscription reactively routes the worker to payment onboarding below.
+        // status + validity window). The use case syncs the reactive `hasMembership` gate; only
+        // once it returns is `membershipChecked` flipped so the router may leave the loader. On
+        // logout (`isAuthenticated` false) the gate resets so the next login re-validates cleanly.
         LaunchedEffect(isAuthenticated) {
-            if (isAuthenticated) locator.validateMembershipUseCase()
+            if (isAuthenticated) {
+                // `finally` guarantees the router leaves the loader even if validation throws
+                // unexpectedly — the use case is best-effort (a failure closes the gate), so a
+                // thrown error must still resolve to a route rather than strand the spinner.
+                try {
+                    locator.validateMembershipUseCase()
+                } finally {
+                    membershipChecked = true
+                }
+            } else {
+                membershipChecked = false
+            }
         }
 
         // Stable callback references — cached so child hosts do not re-bind their
@@ -167,8 +194,29 @@ class MainActivity : AppCompatActivity() {
 
         when {
             !isAuthenticated -> AuthNavHost(onAuthComplete = onAuthComplete)
+            // Hold on a neutral loader while the just-authenticated session's membership is being
+            // validated. This bypasses the intermediate payment-screen frame entirely: routing
+            // resumes only once `membershipChecked` is true, by which point `hasMembership` is the
+            // server-confirmed value, so the very next branch lands on the correct final host.
+            !membershipChecked -> AuthResolvingScreen()
             !hasMembership -> PaymentOnboardingHost(onExitToMainShell = NoPaymentGraphExit)
             else -> MainNavHost(userName = userName, onLogout = onLogout)
+        }
+    }
+
+    /**
+     * Full-screen neutral loader shown during the post-authentication membership-resolution
+     * window. Renders on the brand background (the parent [Surface] already painted it) with a
+     * single centred indicator, so the transition from the auth screen's loading overlay to the
+     * final destination reads as one continuous spinner — no payment-onboarding flicker.
+     */
+    @Composable
+    private fun AuthResolvingScreen() {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
     }
 }

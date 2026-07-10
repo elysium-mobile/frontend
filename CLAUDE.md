@@ -931,12 +931,29 @@ the cold-start path must preserve:
    - The `collectAsStateWithLifecycle` collector on the membership flow attaches
      inside `AppRoot`'s first composition, after the outer `Surface` has already
      been measured and painted.
-   - The three-way `when` routes between `AuthNavHost`,
-     `PaymentOnboardingHost`, and `MainNavHost`. The routing flags are never
-     mutated from inside a composable body — only from lambdas (`onAuthComplete`,
-     `onLogout`) and from `LaunchedEffect` blocks scheduled by
-     `PaymentSuccessScreen` after activation. **No recomposition loop is possible
-     here.**
+   - The **four-way** `when` routes between `AuthNavHost`, a neutral
+     `AuthResolvingScreen` loader, `PaymentOnboardingHost`, and `MainNavHost`. The
+     routing flags are never mutated from inside a composable body — only from
+     lambdas (`onAuthComplete`, `onLogout`) and from `LaunchedEffect` blocks
+     scheduled by `PaymentSuccessScreen` after activation. **No recomposition loop
+     is possible here.**
+   - **Membership-resolution gate (anti-flicker).** A local `membershipChecked`
+     flag (`remember { mutableStateOf(false) }`, not `rememberSaveable` — a fresh
+     composition must re-validate) sits between `!isAuthenticated` and the
+     `hasMembership` branch: `!membershipChecked -> AuthResolvingScreen()`. Without
+     it, the instant `onAuthComplete` flips `isAuthenticated` true the `when` would
+     evaluate against the *stale* local `hasMembership` flag (false for a fresh
+     login) and mount `PaymentOnboardingHost` for one frame before
+     `validateMembershipUseCase()` confirms an active subscription and swaps to the
+     main shell — the observed payment-onboarding flicker. The gate holds routing on
+     a neutral full-screen loader until the `LaunchedEffect(isAuthenticated)`
+     validation returns (flipping `membershipChecked` true inside a `finally`, so a
+     thrown validation never strands the spinner). Only then does the router read the
+     now server-confirmed `hasMembership`, so it lands on the correct **final** host
+     with no intermediate frame. On logout the gate resets so the next login
+     re-validates. The auth screens' own `AuthLoadingOverlay` (shown on
+     `AuthState.Loading`) covers the preceding network round-trip, so the worker sees
+     one continuous spinner from tapping sign-in through to the home dashboard.
 
 The manifest theme (`Theme.SoftWork` in `res/values/themes.xml`) pins
 `android:windowBackground` and `android:colorBackground` to white. The SoftWork
