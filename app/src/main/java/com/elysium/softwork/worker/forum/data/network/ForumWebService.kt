@@ -34,6 +34,10 @@ interface ForumWebService {
     /** Lists every category (with nested threads). */
     @GET("api/v1/categories")
     suspend fun getCategories(): Response<List<Category>>
+
+    /** Creates a new category under a forum (`CreateCategoryRequest`: title/description/forum_id). */
+    @POST("api/v1/categories")
+    suspend fun createCategory(@Body category: Category): Response<Category>
     // endregion
 
     // region Threads

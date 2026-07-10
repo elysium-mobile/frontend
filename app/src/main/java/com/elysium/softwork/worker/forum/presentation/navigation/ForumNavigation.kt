@@ -12,6 +12,7 @@ import com.elysium.softwork.shared.presentation.navigation.PushPopExit
 import com.elysium.softwork.shared.presentation.navigation.TabEnter
 import com.elysium.softwork.shared.presentation.navigation.TabExit
 import com.elysium.softwork.worker.forum.presentation.views.feed.ForumScreen
+import com.elysium.softwork.worker.forum.presentation.views.newpost.CategorySelectionScreen
 import com.elysium.softwork.worker.forum.presentation.views.newpost.NewPostScreen
 import com.elysium.softwork.worker.forum.presentation.views.report.ForumReportScreen
 import com.elysium.softwork.worker.forum.presentation.views.reports.ReportsStatusScreen
@@ -37,23 +38,44 @@ fun NavGraphBuilder.forumGraph(navController: NavHostController, userName: Strin
         popExitTransition = TabExit,
     ) {
         ForumScreen(
-            onNewPost = { navController.navigate(ForumRoutes.NEW_POST) },
+            onNewPost = { navController.navigate(ForumRoutes.CATEGORY_SELECTION) },
             onOpenThread = { threadId -> navController.navigate(ForumRoutes.thread(threadId)) },
             onReportPost = { threadId -> navController.navigate(ForumRoutes.report(threadId)) },
         )
     }
 
     composable(
-        route = ForumRoutes.NEW_POST,
+        route = ForumRoutes.CATEGORY_SELECTION,
         enterTransition = PushEnter,
         exitTransition = PushExit,
         popEnterTransition = PushPopEnter,
         popExitTransition = PushPopExit,
     ) {
+        CategorySelectionScreen(
+            onBack = { navController.popBackStack() },
+            onCategoryChosen = { categoryId -> navController.navigate(ForumRoutes.newPost(categoryId)) },
+        )
+    }
+
+    composable(
+        route = ForumRoutes.NEW_POST,
+        arguments = listOf(
+            navArgument(ForumRoutes.NEW_POST_ARG_CATEGORY_ID) { type = NavType.LongType },
+        ),
+        enterTransition = PushEnter,
+        exitTransition = PushExit,
+        popEnterTransition = PushPopEnter,
+        popExitTransition = PushPopExit,
+    ) { backStackEntry ->
+        val categoryId: Long = backStackEntry.arguments
+            ?.getLong(ForumRoutes.NEW_POST_ARG_CATEGORY_ID)
+            ?: 0L
         NewPostScreen(
+            categoryId = categoryId,
             userName = userName,
             onClose = { navController.popBackStack() },
-            onPublished = { navController.popBackStack() },
+            // Pop straight back to the feed (past the category-selection step) on success.
+            onPublished = { navController.popBackStack(ForumRoutes.FEED, inclusive = false) },
         )
     }
 

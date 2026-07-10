@@ -1,5 +1,7 @@
 package com.elysium.softwork.worker.forum.presentation.views.newpost
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,12 +54,18 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * category picker is removed — the backend keys threads by a numeric `category_id` the client
  * cannot derive.
  *
+ * A bottom toolbar hosts a paperclip button that opens the system file picker; the chosen
+ * document/image/video uri is captured in the ViewModel and, on publish, uploaded to the seeded
+ * message (Phase B). The thread is created under the [categoryId] chosen on the preceding screen.
+ *
+ * @param categoryId owning category id forwarded from `CategorySelectionScreen`.
  * @param userName name shown in the privacy banner when posting non-anonymously.
  * @param onClose pop handler for the × button.
  * @param onPublished invoked once [NewPostViewModel] reports `Published`.
  */
 @Composable
 fun NewPostScreen(
+    categoryId: Long,
     userName: String,
     onClose: () -> Unit,
     onPublished: () -> Unit,
@@ -66,6 +74,16 @@ fun NewPostScreen(
 ) {
     val form: NewPostViewModel.FormState by viewModel.form.collectAsStateWithLifecycle()
     val publishState: NewPostViewModel.PublishState by viewModel.publishState.collectAsStateWithLifecycle()
+    val pickedFileName: String? by viewModel.pickedFileName.collectAsStateWithLifecycle()
+
+    LaunchedEffect(categoryId) { viewModel.setCategory(categoryId) }
+
+    // System file picker. `GetContent("*/*")` covers PDFs, images (JPEG) and video; the resolved
+    // uri's MIME + bytes are read by the ViewModel and forwarded as the multipart `fileType`/`file`.
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri -> viewModel.onFilePicked(uri) },
+    )
 
     LaunchedEffect(publishState) {
         if (publishState is NewPostViewModel.PublishState.Published) {
@@ -99,6 +117,13 @@ fun NewPostScreen(
                 onValueChange = viewModel::onContentChange,
                 maxLength = viewModel.maxBodyLength,
                 modifier = Modifier.weight(1f),
+            )
+
+            Spacer(Modifier.height(8.dp))
+            AttachmentBar(
+                pickedFileName = pickedFileName,
+                onAttach = { filePicker.launch("*/*") },
+                onClear = { viewModel.onFilePicked(null) },
             )
 
             if (publishState is NewPostViewModel.PublishState.Error) {
@@ -148,6 +173,61 @@ private fun Header(canPublish: Boolean, onClose: () -> Unit, onPublish: () -> Un
                 .clickable(enabled = canPublish, onClick = onPublish)
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         )
+    }
+}
+
+/**
+ * Bottom attachment toolbar: a paperclip button opens the picker; when a file is chosen its name
+ * is shown with a clear affordance. No file selected → a hint label sits beside the button.
+ */
+@Composable
+private fun AttachmentBar(
+    pickedFileName: String?,
+    onAttach: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(color = AccentMint.copy(alpha = 0.4f), shape = CircleShape)
+                .clickable(onClick = onAttach),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_paperclip),
+                contentDescription = stringResource(R.string.forum_attach_file),
+                tint = PrimarySky,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        if (pickedFileName != null) {
+            Text(
+                text = pickedFileName,
+                color = PrimaryNavy,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                painter = painterResource(R.drawable.ic_close),
+                contentDescription = stringResource(R.string.forum_remove_attachment),
+                tint = AccentDark,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(onClick = onClear),
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.forum_attach_file),
+                color = AccentDark,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 

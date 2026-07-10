@@ -5,10 +5,16 @@ import com.elysium.softwork.shared.data.network.BadRequestResponse
 import com.elysium.softwork.worker.forum.data.local.MessageDao
 import com.elysium.softwork.worker.forum.data.local.ThreadDao
 import com.elysium.softwork.worker.forum.data.network.ForumWebService
+import com.elysium.softwork.worker.forum.domain.model.Asset
+import com.elysium.softwork.worker.forum.domain.model.Category
+import com.elysium.softwork.worker.forum.domain.model.Forum
 import com.elysium.softwork.worker.forum.domain.model.Message
 import com.elysium.softwork.worker.forum.domain.model.Thread
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.Flow
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
 
 /**
@@ -110,6 +116,43 @@ class ForumStoreImpl(
         created
     }
 
+    override suspend fun getCompanyForum(): Result<Forum?> = runCatching {
+        val companyId: Long? = companyIdProvider()
+        if (companyId == null) {
+            null
+        } else {
+            unwrapList(webService.getForums()).firstOrNull { it.company_id == companyId }
+        }
+    }
+
+    override suspend fun createCategory(category: Category): Result<Category> = runCatching {
+        unwrap(webService.createCategory(category))
+    }
+
+    override suspend fun uploadAsset(
+        messageId: Long,
+        name: String,
+        fileType: String,
+        bytes: ByteArray,
+    ): Result<Asset> = runCatching {
+        // Multipart form fields bind the exact controller-expected names. The text parts stay
+        // `text/plain`; the binary `file` part carries the picked file's own MIME + filename.
+        val textPlain = TEXT_PLAIN.toMediaTypeOrNull()
+        val filePart = MultipartBody.Part.createFormData(
+            name = PART_FILE,
+            filename = name,
+            body = bytes.toRequestBody(fileType.toMediaTypeOrNull()),
+        )
+        unwrap(
+            webService.createAsset(
+                messageId = messageId.toString().toRequestBody(textPlain),
+                name = name.toRequestBody(textPlain),
+                fileType = fileType.toRequestBody(textPlain),
+                file = filePart,
+            ),
+        )
+    }
+
     /** Unwraps a single-object [response]; a `400` becomes a [BadRequestException]. */
     private fun <T> unwrap(response: Response<T>): T {
         if (response.isSuccessful) {
@@ -143,5 +186,7 @@ class ForumStoreImpl(
 
     private companion object {
         const val HTTP_BAD_REQUEST: Int = 400
+        const val TEXT_PLAIN: String = "text/plain"
+        const val PART_FILE: String = "file"
     }
 }

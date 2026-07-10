@@ -33,7 +33,7 @@ import okhttp3.Response
  *    credentials on `sign-in` is handled by the login screen, not the trap.
  *  - **[TRAP_EXEMPT_SUFFIXES]** (the post-login `employee-profile` sync) are authenticated
  *    but best-effort; a `401` there must not tear down the session that was just created.
- *  - **[RETRY_GATE_SUFFIXES]** (the payment routes `membership-plans` / `memberships` / `orders`)
+ *  - **[RETRY_GATE_SUFFIXES]** (the payment routes `memberships-plans` / `memberships` / `orders`)
  *    return `401` as a *business* gate — the session is valid, the worker simply has no active
  *    membership. `MembershipViewModel` handles these (the catalogue flows into the UI freely,
  *    while an enrolment-status or order-push failure is mapped to a "membership expired" state
@@ -144,12 +144,15 @@ class AuthInterceptor(
          * the JWT is valid but the worker has no active membership. The membership ViewModel
          * catches these and routes to the payment-onboarding screen, so they are excluded from
          * the session-invalidation trap (no logout, no login bounce). Covers the payment context:
-         *  - `/membership-plans` — the public catalogue, which must always flow into the UI;
+         *  - `/memberships-plans` — the public catalogue, which must always flow into the UI
+         *    (note the **double** plural per the backend route quirk — see
+         *    `ELYSIUM-API_DOCUMENTATION.md` §6.4; a single-plural suffix here would fail to match
+         *    the actual `/api/v1/memberships-plans` request path);
          *  - `/memberships` — enrolment-status validation (the actual gate signal);
          *  - `/orders` — the order-push transaction (a gated business route).
          */
         private val RETRY_GATE_SUFFIXES: List<String> = listOf(
-            "/membership-plans",
+            "/memberships-plans",
             "/memberships",
             "/orders",
         )

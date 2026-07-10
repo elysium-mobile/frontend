@@ -11,7 +11,18 @@ package com.elysium.softwork.worker.forum.presentation.navigation
  */
 object ForumRoutes {
     const val FEED: String = "forum/feed"
-    const val NEW_POST: String = "forum/new-post"
+
+    /** Intermediate category-selection step opened before the composer. */
+    const val CATEGORY_SELECTION: String = "forum/categories"
+
+    private const val NEW_POST_BASE: String = "forum/new-post"
+    const val NEW_POST_ARG_CATEGORY_ID: String = "categoryId"
+
+    /** Composer route, parameterized by the chosen `category_id` (`LongType`). */
+    const val NEW_POST: String = "$NEW_POST_BASE/{$NEW_POST_ARG_CATEGORY_ID}"
+
+    /** Builds a concrete composer route under [categoryId]. */
+    fun newPost(categoryId: Long): String = "$NEW_POST_BASE/$categoryId"
 
     private const val THREAD_BASE: String = "forum/thread"
     const val THREAD_ARG_THREAD_ID: String = "threadId"

@@ -1,5 +1,8 @@
 package com.elysium.softwork.worker.forum.data.store
 
+import com.elysium.softwork.worker.forum.domain.model.Asset
+import com.elysium.softwork.worker.forum.domain.model.Category
+import com.elysium.softwork.worker.forum.domain.model.Forum
 import com.elysium.softwork.worker.forum.domain.model.Message
 import com.elysium.softwork.worker.forum.domain.model.Thread
 import kotlinx.coroutines.flow.Flow
@@ -43,4 +46,31 @@ interface ForumStore {
 
     /** Posts a new message; on success it is cached and [observeMessages] re-emits. */
     suspend fun postMessage(message: Message): Result<Message>
+
+    /**
+     * Fetches the signed-in worker's company forum from `GET /api/v1/forums` (filtered by
+     * `company_id`), with its nested `categories`. Backs the category-selection step. Returns
+     * `null` when the org has no forum (or the company id is not yet resolved).
+     */
+    suspend fun getCompanyForum(): Result<Forum?>
+
+    /** Creates a new category under a forum (`POST /api/v1/categories`). */
+    suspend fun createCategory(category: Category): Result<Category>
+
+    /**
+     * Uploads a file attachment for a message as `multipart/form-data` (`POST /api/v1/assets`).
+     * The form fields bind exactly the controller-expected names — `messageId`, `name`,
+     * `fileType`, `file`.
+     *
+     * @param messageId the owning message's server id (bound to the `messageId` part).
+     * @param name the file's display name (bound to `name` + the `file` part's filename).
+     * @param fileType the file's MIME type (bound to `fileType` + the `file` part's content type).
+     * @param bytes the raw file content, already read from the picked `content://` uri.
+     */
+    suspend fun uploadAsset(
+        messageId: Long,
+        name: String,
+        fileType: String,
+        bytes: ByteArray,
+    ): Result<Asset>
 }

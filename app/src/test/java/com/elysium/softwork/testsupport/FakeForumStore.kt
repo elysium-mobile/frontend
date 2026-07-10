@@ -1,6 +1,9 @@
 package com.elysium.softwork.testsupport
 
 import com.elysium.softwork.worker.forum.data.store.ForumStore
+import com.elysium.softwork.worker.forum.domain.model.Asset
+import com.elysium.softwork.worker.forum.domain.model.Category
+import com.elysium.softwork.worker.forum.domain.model.Forum
 import com.elysium.softwork.worker.forum.domain.model.Message
 import com.elysium.softwork.worker.forum.domain.model.Thread
 import kotlinx.coroutines.flow.Flow
@@ -67,6 +70,33 @@ open class FakeForumStore(initialThreads: List<Thread> = emptyList()) : ForumSto
     override suspend fun postMessage(message: Message): Result<Message> {
         postMessageInvocations += 1
         return nextPostMessageResult
+    }
+
+    /** Result returned by the next [getCompanyForum] call. Defaults to no forum. */
+    var nextCompanyForumResult: Result<Forum?> = Result.success(null)
+
+    /** Result returned by the next [createCategory] call. Defaults to a stub category. */
+    var nextCreateCategoryResult: Result<Category> = Result.success(Category(category_id = 1L))
+
+    /** Tally of [uploadAsset] invocations. */
+    var uploadAssetInvocations: Int = 0
+        private set
+
+    /** Result returned by the next [uploadAsset] call. Defaults to a stub asset. */
+    var nextUploadAssetResult: Result<Asset> = Result.success(Asset(asset_id = 1L))
+
+    override suspend fun getCompanyForum(): Result<Forum?> = nextCompanyForumResult
+
+    override suspend fun createCategory(category: Category): Result<Category> = nextCreateCategoryResult
+
+    override suspend fun uploadAsset(
+        messageId: Long,
+        name: String,
+        fileType: String,
+        bytes: ByteArray,
+    ): Result<Asset> {
+        uploadAssetInvocations += 1
+        return nextUploadAssetResult
     }
 
     /** Test-only emission helper for the thread feed. */

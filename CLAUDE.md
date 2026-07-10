@@ -1111,15 +1111,17 @@ server-side, so the device sends only the display name).
     `404` / fetch failure ⇒ not active ⇒ gate closed. `MainActivity` invokes it in a
     `LaunchedEffect(isAuthenticated)` on cold-start and after login, so a non-active subscription
     reactively routes the worker to payment onboarding (`ServiceLocator.validateMembershipUseCase`).
-  - **Catalogue stays browse-only.** `/api/v1/membership-plans` (`getPlans` → `loadPlans`) never
+  - **Catalogue stays browse-only.** `/api/v1/memberships-plans` (`getPlans` → `loadPlans`) never
     flips the gate — a failure lands on `errorMessage` only, so an expired worker always sees the
     upgrade tiers. `MembershipViewModel.validateMembershipAccess()` reuses the same
     `ValidateMembershipUseCase` to drive the `MembershipRequiredBanner` (strings
     `payment_membership_required` / `_detail`); an `/orders` order-push business-rule failure also
     raises it via the VM's private `isMembershipGate()`.
-  - **Trap exemption unchanged:** `AuthInterceptor.RETRY_GATE_SUFFIXES` (`/membership-plans`,
+  - **Trap exemption:** `AuthInterceptor.RETRY_GATE_SUFFIXES` (`/memberships-plans`,
     `/memberships`, `/orders`) keeps all three out of the `401` session-invalidation logout trap;
-    `MembershipStoreImpl.throwTyped` still maps `401` → `UnauthorizedException`.
+    `MembershipStoreImpl.throwTyped` still maps `401` → `UnauthorizedException`. The plans suffix is
+    the **double** plural `/memberships-plans` to match the backend route quirk (doc §6.4) —
+    otherwise `endsWith` would miss the real path and a catalogue `401` would wrongly log the worker out.
   - Replaced the interim list-based `getMemberships()` / `GetMembershipsUseCase` with the FK
     `getMembership(id)` / `ValidateMembershipUseCase`. `FakeMembershipStore` exposes
     `nextMembershipResult`.
@@ -1483,6 +1485,40 @@ states — the empty fallback is a `fillParentMaxSize` item — so the pull gest
 scrollable child, even when the org has no threads. `refresh()` remains the init-load path too, so
 the indicator also shows briefly on cold mount.
 
+#### Phase 12 addendum — category-selection step + multipart attachment pipeline
+
+The new-post flow now has an intermediate category step and a two-phase thread+attachment submit:
+
+- **Route reality vs. directive.** The directive named `POST /forums/{forumId}/categories` (create
+  category) and `POST /messages/{id}/assets` (attach) — but those are the backend's **link**
+  endpoints (they take an existing `category_id` / `asset_id`). The actual *creation* routes are
+  `POST /api/v1/categories` (body: title/description/`forum_id`) and the `multipart/form-data`
+  `POST /api/v1/assets`. This implementation uses the real creation routes.
+- **`CategorySelectionScreen`** (new) sits before the composer: lists the company forum's nested
+  `categories` (via `GetCompanyForumUseCase` → `ForumStore.getCompanyForum()`, which fetches
+  `GET /forums` and filters by `company_id`), with an inline "create category" bar
+  (`CreateCategoryUseCase` → `POST /categories` under the resolved `forum_id`). Selecting a category
+  forwards its `category_id` as a `NavType.LongType` arg into `NEW_POST` (now
+  `forum/new-post/{categoryId}` + a `newPost(id)` builder). The FAB routes here first.
+- **`NewPostScreen`** gained a paperclip **attachment toolbar**: `rememberLauncherForActivityResult(
+  GetContent("*/*"))` captures a PDF/JPEG/video uri; the bytes + name + MIME are read eagerly at pick
+  time via the application `ContentResolver` (injected into `NewPostViewModel` as an
+  `assetReader: (Uri) -> PickedAsset?`, keeping the VM `Context`-free) and held in memory as
+  `PickedAsset`.
+- **Two-phase publish** (in `NewPostViewModel.publish`, the composer VM — the codebase has no
+  monolithic `ForumViewModel`): **Phase A** `CreateThreadUseCase` (under `category_id`, with
+  `area_company_id` = cached `company_id`) → `PostMessageUseCase` seeds the first message and yields
+  the server `message_id` (body falls back to the file name when only a file is attached).
+  **Phase B (conditional)** when a file is attached, `UploadMessageAssetUseCase` →
+  `ForumStore.uploadAsset` POSTs `multipart/form-data` to `/assets` with the exact controller field
+  names **`messageId` / `name` / `fileType` / `file`**. Message + asset steps are best-effort (the
+  thread already exists ⇒ `Published`); a thread-create `400` surfaces inline.
+- **New wiring**: `ForumWebService.createCategory`; `ForumStore` + `ForumStoreImpl` gained
+  `getCompanyForum` / `createCategory` / `uploadAsset` (multipart built with OkHttp
+  `MultipartBody.Part` + `toRequestBody`); use cases `GetCompanyForumUseCase` /
+  `CreateCategoryUseCase` / `UploadMessageAssetUseCase`; `CategorySelectionViewModel`. `FakeForumStore`
+  implements the three new store methods.
+
 The `payment.membership` context now talks to the real payment-service API. The mock
 `PlanCatalogue`, the `MOCK_PAYMENT_DELAY_MS`, and the fake in-memory plan list are deleted.
 The local membership **gate** (`hasMembership` / `currentPlanKey`, backed by `SharedPrefsManager`)
@@ -1507,8 +1543,8 @@ neither a gate nor a stored instrument (it models payment as a transaction).
 - **Network (`payment/membership/data/network/MembershipWebService`)** — relative paths:
   `POST/GET api/v1/memberships`, `GET api/v1/memberships/{id}`, `POST/GET api/v1/orders`,
   `GET api/v1/orders/userAccount/{userAccountId}`, `POST api/v1/payments`,
-  `GET api/v1/payments/{id}`, `GET api/v1/membership-plans`,
-  `POST api/v1/membership-plans/{id}/benefits`.
+  `GET api/v1/payments/{id}`, `GET api/v1/memberships-plans`,
+  `POST api/v1/memberships-plans/{id}/benefits` (**double** plural per doc §6.4's route quirk).
 - **Store (`MembershipStoreImpl`)** — `PlanCatalogue`/`delay`/`availablePlans()`/`findPlan()`
   removed; now `MembershipStoreImpl(prefs, webService, gson)` with suspend `getPlans()` /
   `createOrder()` / `createPayment()` (`400` → `BadRequestException`). Gate flags + card

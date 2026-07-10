@@ -108,6 +108,12 @@
     <string name="forum_anonymous_author">Anónimo</string>
     <string name="forum_replies_count">💬 %1$d</string>
     <string name="forum_empty">Aún no hay foros disponibles para tu organización.</string>
+    <string name="category_selection_title">Elige una categoría</string>
+    <string name="category_selection_empty">Aún no hay categorías. Crea la primera abajo.</string>
+    <string name="category_new_hint">Nombre de la nueva categoría</string>
+    <string name="category_create_button">Crear</string>
+    <string name="forum_attach_file">Adjuntar archivo</string>
+    <string name="forum_remove_attachment">Quitar adjunto</string>
     <string name="forum_message_author">Usuario #%1$d</string>
     <string name="forum_new_post">Nueva publicación</string>
     <string name="forum_new_post_publish">Publicar</string>

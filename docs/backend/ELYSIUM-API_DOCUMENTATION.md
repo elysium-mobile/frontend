@@ -44,7 +44,7 @@ altered (out of scope for the naming change):
 
 | DTO | Java field | JSON key | Note |
 |---|---|---|---|
-| `EmployeeProfileResponse` | `starStart` | `star_start` | field is a typo of "dateStart"; response key differs from the request's `date_start` |
+| `EmployeeProfileResponse` | `dateStart` | `date_start` | field is a typo of "dateStart"; response key differs from the request's `date_start` |
 | `RRHHProfileSignUpRequest`, `CreateRRHHProfileRequest`, `UpdateRRHHProfileRequest`, `RRHHProfileResponse` | `RRHHDepartment` | `rrhhdepartment` | leading consecutive capitals → Jackson emits **no** underscore |
 
 > **Note on Jackson's algorithm**: `SnakeCaseStrategy` does not insert an underscore between
@@ -192,14 +192,22 @@ Public endpoints — no token required.
 }
 ```
 
-**Response 200** (`AuthenticatedUserAccountResponse`):
+**Response 201** (`EmployeeProfileResponse`):
 ```json
 {
-  "id": 9,
-  "email": "juan@example.com",
-  "token": "eyJhbGciOiJIUzI1NiIs..."
+  "employee_profile_id": 1,
+  "date_start": "2026-01-15",
+  "position": "Backend Developer",
+  "salary": 5000,
+  "work_of_team_id": 1,
+  "user_account_id": 1
 }
 ```
+
+> **Note**: The sign-up endpoint returns the created `EmployeeProfileResponse`, not an
+> `AuthenticatedUserAccountResponse`. The JWT-based session is established via sign-in
+> afterwards.
+> **Warning**: the response field `date_start` is a typo of `date_start` (see residual quirks).
 
 ---
 
@@ -223,14 +231,18 @@ Public endpoints — no token required.
 > **Note**: the key is `rrhhdepartment` (no underscore) because the Java field is `RRHHDepartment`
 > and Jackson's `SnakeCaseStrategy` does not split consecutive capitals.
 
-**Response 200** (`AuthenticatedUserAccountResponse`):
+**Response 201** (`RRHHProfileResponse`):
 ```json
 {
-  "id": 9,
-  "email": "ana@example.com",
-  "token": "eyJhbGciOiJIUzI1NiIs..."
+  "rrhh_profile_id": 1,
+  "rrhhdepartment": "Human Resources",
+  "status_hierarchy": "Manager",
+  "user_account_id": 1
 }
 ```
+
+> **Note**: Same as employee sign-up — returns the profile, not an auth token.
+> The JWT session is obtained via the sign-in endpoint.
 
 ---
 
@@ -471,13 +483,13 @@ Google authentication is split into two phases so that **no user data is ever mo
 ```
 
 | JSON Key | Java Field | Type | Validation |
-|---|---|---|---|
-| `user_id` | `userId` | Long | @NotNull @NotBlank |
+|---|---|---|---|---|
+| `user_id` | `userId` | Long | @NotNull |
 | `email` | `email` | String | @NotNull @NotBlank |
 | `password` | `password` | String | @NotNull @NotBlank |
 | `anonymous_name` | `anonymousName` | String | @NotNull @NotBlank |
-| `membership_id` | `membershipId` | Long | @NotNull @NotBlank |
-| `company_id` | `companyId` | Long | @NotNull @NotBlank |
+| `membership_id` | `membershipId` | Long | @NotNull |
+| `company_id` | `companyId` | Long | @NotNull |
 
 **Response 201** (`UserAccountResponse`):
 ```json
@@ -528,18 +540,18 @@ Google authentication is split into two phases so that **no user data is ever mo
 ```
 
 | JSON Key | Java Field | Type | Validation |
-|---|---|---|---|
-| `date_start` | `dateStart` | Date | @NotNull @NotBlank |
+|---|---|---|---|---|
+| `date_start` | `dateStart` | Date | @NotNull |
 | `position` | `position` | String | @NotNull @NotBlank |
-| `salary` | `salary` | Integer | @NotNull @NotBlank |
-| `work_of_team_id` | `workOfTeamId` | Long | @NotNull @NotBlank |
-| `user_account_id` | `UserAccountId` | Long | @NotNull @NotBlank |
+| `salary` | `salary` | Integer | @NotNull |
+| `work_of_team_id` | `workOfTeamId` | Long | @NotNull |
+| `user_account_id` | `UserAccountId` | Long | @NotNull |
 
 **Response 201** (`EmployeeProfileResponse`):
 ```json
 {
   "employee_profile_id": 1,
-  "star_start": "2026-01-15",
+  "date_start": "2026-01-15",
   "position": "Backend Developer",
   "salary": 5000,
   "work_of_team_id": 1,
@@ -550,14 +562,14 @@ Google authentication is split into two phases so that **no user data is ever mo
 | JSON Key | Java Field | Type | Notes |
 |---|---|---|---|
 | `employee_profile_id` | `employeeProfileId` | Long | |
-| `star_start` | `starStart` | Date | **field is a typo of "dateStart"** → serializes as `star_start` |
+| `date_start` | `dateStart` | Date | **field is a typo of "dateStart"** → serializes as `date_start` |
 | `position` | `position` | String | |
 | `salary` | `salary` | Integer | |
 | `work_of_team_id` | `workOfTeamId` | Long | |
 | `user_account_id` | `UserAccountId` | Long | |
 
-> **RESIDUAL INCONSISTENCY**: the request sends `date_start` but the response returns `star_start`,
-> because the response record's field is literally named `starStart` (a typo left intact — renaming
+> **RESIDUAL INCONSISTENCY**: the request sends `date_start` but the response returns `date_start`,
+> because the response record's field is literally named `dateStart` (a typo left intact — renaming
 > domain fields was out of scope for the naming change).
 
 #### PUT `/api/v1/employee-profile/{id}` — Update
@@ -586,10 +598,10 @@ Google authentication is split into two phases so that **no user data is ever mo
 ```
 
 | JSON Key | Java Field | Type | Validation |
-|---|---|---|---|
+|---|---|---|---|---|
 | `rrhhdepartment` | `RRHHDepartment` | String | @NotNull @NotBlank |
 | `status_hierarchy` | `statusHierarchy` | String | @NotNull @NotBlank |
-| `user_account_id` | `userAccountId` | Long | @NotNull @NotBlank |
+| `user_account_id` | `userAccountId` | Long | @NotNull |
 
 > **Note**: `RRHHDepartment` → `rrhhdepartment` (no underscore). This is a change from the previous
 > `rrhh_department`, which had been forced by an explicit `@JsonProperty` now removed.
@@ -770,11 +782,19 @@ Google authentication is split into two phases so that **no user data is ever mo
 {
   "title": "Main Dashboard",
   "description": "Overview of metrics",
-  "ruc": "20123456789"
+  "ruc": "20123456789",
+  "company_id": 1
 }
 ```
 
-> **Note**: Create does NOT accept `company_id`. Only Update does.
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `title` | `title` | String | @NotNull @NotBlank |
+| `description` | `description` | String | @NotNull @NotBlank |
+| `ruc` | `ruc` | String | @NotNull @NotBlank |
+| `company_id` | `companyId` | Long | @NotNull |
+
+> **Note**: Both Create and Update accept `company_id`.
 
 **Response 201** (`DashboardResponse`):
 ```json
@@ -790,15 +810,7 @@ Google authentication is split into two phases so that **no user data is ever mo
 
 #### PUT `/api/v1/dashboards/{id}` — Update
 
-**Request** (`UpdateDashboardRequest`):
-```json
-{
-  "title": "Updated Dashboard",
-  "description": "New description",
-  "ruc": "20123456789",
-  "company_id": 1
-}
-```
+**Request** (`UpdateDashboardRequest`): Same structure as Create.
 
 #### GET `/api/v1/dashboards` — List all
 
@@ -821,7 +833,10 @@ Google authentication is split into two phases so that **no user data is ever mo
 
 ---
 
-### 4.4 Widgets — `/api/v1/widgets`
+### 4.4 Widgets — `/api/v1/widgets` `@Deprecated`
+
+> **DEPRECATED**: This endpoint is scheduled for removal. Use Dashboard's widget
+> sub-resource (`POST /api/v1/dashboards/{dashboardId}/widgets`) instead.
 
 #### POST `/api/v1/widgets` — Create widget
 
@@ -1042,7 +1057,7 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 
 `target_type` valid values: `AREA_COMPANY`, `UNIT_OF_WORK`, `TEAM_OF_WORK`.
 
-**Response 201** (`SurveyResponse`):
+**Response 201** (`SurveyResponse` — note: this is the **Survey** response DTO, not to be confused with the SurveyResponse entity):
 ```json
 {
   "survey_id": 1,
@@ -1088,7 +1103,7 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 
 **Backend validations**: Survey must exist; Employee Profile must exist (checked via IAM ACL); Survey must not be expired; Employee must not have already responded to this survey.
 
-**Response 201** (`SurveyResponseResponse`):
+**Response 201** (`SurveyResponseResponse` — the response DTO for the SurveyResponse aggregate):
 ```json
 {
   "survey_response_id": 1,
@@ -1165,7 +1180,10 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 
 ---
 
-### 5.4 Answers — `/api/v1/answers`
+### 5.4 Answers — `/api/v1/answers` `@Deprecated`
+
+> **DEPRECATED**: This endpoint is scheduled for removal. Use QuestionSurvey
+> sub-resource operations instead.
 
 #### POST `/api/v1/answers` — Create answer
 
@@ -1355,16 +1373,25 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 **Request** (`CreateMembershipRequest`):
 ```json
 {
+  "membership_plan_id": 1,
   "membership_start": "2026-01-01",
   "membership_over": "2026-12-31",
   "membership_status": "ACTIVE"
 }
 ```
 
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `membership_plan_id` | `membershipPlanId` | Long | @NotNull |
+| `membership_start` | `membershipStart` | Date | @NotNull |
+| `membership_over` | `membershipOver` | Date | @NotNull |
+| `membership_status` | `membershipStatus` | String | @NotNull @NotBlank |
+
 **Response 201** (`MembershipResponse`):
 ```json
 {
   "membership_id": 1,
+  "membership_plan_id": 1,
   "membership_start": "2026-01-01",
   "membership_over": "2026-12-31",
   "membership_status": "ACTIVE"
@@ -1393,6 +1420,14 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
   "membership_id": 1
 }
 ```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `user_account_id` | `userAccountId` | Long | @NotNull |
+| `amount` | `amount` | Integer | — |
+| `membership_id` | `membershipId` | Long | @NotNull |
+
+> **Note**: `amount` has no `@NotNull` validation in the DTO.
 
 **Business validations** (in `OrderCommandServiceImpl`):
 1. `user_account_id` must exist → `404 NotFoundArgumentException`
@@ -1433,9 +1468,19 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 {
   "order_id": 1,
   "transaction_id": "TXN-2026-001",
-  "payment_date": "2026-06-19"
+  "payment_date": "2026-06-19",
+  "payment_status": "PENDING",
+  "payment_method": "STRIPE"
 }
 ```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `order_id` | `orderId` | Long | @NotNull |
+| `transaction_id` | `transactionId` | String | @NotNull @NotBlank |
+| `payment_date` | `paymentDate` | Date | @NotNull |
+| `payment_status` | `paymentStatus` | String | @NotNull @NotBlank |
+| `payment_method` | `paymentMethod` | String | @NotNull @NotBlank |
 
 **Response 201** (`PaymentResponse`):
 ```json
@@ -1443,7 +1488,9 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
   "payment_id": 1,
   "order_id": 1,
   "transaction_id": "TXN-2026-001",
-  "payment_date": "2026-06-19"
+  "payment_status": "PENDING",
+  "payment_date": "2026-06-19",
+  "payment_method": "STRIPE"
 }
 ```
 
@@ -1461,7 +1508,9 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 
 ---
 
-### 6.4 Membership Plans — `/api/v1/membership-plans`
+### 6.4 Membership Plans — `/api/v1/memberships-plans`
+
+> **Note**: The route is `/api/v1/memberships-plans` (plural of both words), not `/api/v1/membership-plans`.
 
 #### POST `/api/v1/membership-plans` — Create plan
 
@@ -1469,10 +1518,14 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 ```json
 {
   "plan_name": "Professional",
-  "price": 99,
-  "membership_id": 1
+  "price": 99
 }
 ```
+
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `plan_name` | `planName` | String | @NotBlank |
+| `price` | `price` | Integer | — |
 
 **Response 201** (`MembershipPlanResponse`):
 ```json
@@ -1480,10 +1533,16 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
   "plan_id": 1,
   "plan_name": "Professional",
   "price": 99,
-  "membership_id": 1,
   "benefit_response_list": []
 }
 ```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `plan_id` | `planId` | Long | |
+| `plan_name` | `planName` | String | |
+| `price` | `price` | Integer | |
+| `benefit_response_list` | `benefitResponseList` | BenefitResponse[] | Verbose field name (matches source code) |
 
 #### PUT `/api/v1/membership-plans/{id}` — Update
 
@@ -1557,6 +1616,12 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 }
 ```
 
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `seen` | `seen` | boolean | — |
+| `notification_type` | `notificationType` | String (Enum) | @NotNull @NotBlank |
+| `user_account_id` | `userAccountId` | Long | @NotNull |
+
 **Response 201** (`NotificationResponse`):
 ```json
 {
@@ -1568,6 +1633,8 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 ```
 
 #### PUT `/api/v1/notifications/{id}` — Update
+
+**Request** (`UpdateNotificationRequest`): Same structure as Create.
 
 #### GET `/api/v1/notifications` — List
 
@@ -1590,6 +1657,12 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 }
 ```
 
+| JSON Key | Java Field | Type | Validation |
+|---|---|---|---|
+| `title` | `title` | String | @NotNull @NotBlank |
+| `content` | `content` | String | @NotNull @NotBlank |
+| `notification_id` | `notificationId` | Long | @NotNull |
+
 **Response 201** (`NotificationDetailResponse`):
 ```json
 {
@@ -1601,6 +1674,8 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 ```
 
 #### PUT `/api/v1/notification-details/{id}` — Update
+
+**Request** (`UpdateNotificationDetailRequest`): Same structure as Create.
 
 #### GET `/api/v1/notification-details` — List
 
@@ -1646,6 +1721,10 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 #### GET `/api/v1/forums` — List
 
 #### GET `/api/v1/forums/{id}` — Get by ID
+
+#### GET `/api/v1/forums/company/{companyId}` — By company
+
+**Response 200**: `ForumResponse[]`
 
 #### DELETE `/api/v1/forums/{id}` — Delete
 
@@ -1919,6 +1998,47 @@ curl -X POST http://localhost:8092/api/v1/assets \
 
 ---
 
+### 8.7 Employee Assistant (Worker Forum) — `/api/v1/employee-assistant`
+
+> Endpoint powered by Google Gemini (`gemini-2.5-flash`) through the
+> `@Qualifier("employeeAssistantChatClient")` bean with an employee-facing HR persona.
+> This is a **separate** AI assistant from the Feedback Assistant (`/api/v1/feedback-assistant`);
+> it answers general company questions (policies, benefits, forum, surveys, performance)
+> rather than focusing on survey drafting.
+
+**Auth**: requires `Authorization: Bearer <JWT>`.
+**CORS**: `POST` only.
+
+#### POST `/api/v1/employee-assistant` — Ask the assistant
+
+**Request** (`AskEmployeeAssistantRequest`):
+```json
+{
+  "company_id": 1,
+  "prompt": "What are the company policies on remote work?"
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `company_id` | `companyId` | Long | Optional (nullable). If provided, the assistant prepends company context |
+| `prompt` | `prompt` | String | The employee's question or concern |
+
+**What happens server-side**: If `company_id` is present, the service fetches the company name
+via the Dashboard ACL and prepends context. The full prompt is sent to the AI.
+
+**Response 200** (`AssistantAnswerResponse`):
+```json
+{
+  "content_answer": "Our company supports remote work on Mondays and Fridays..."
+}
+```
+
+**Errors**:
+- `500 Internal Server Error`: AI model call fails → `"Error generating assistant response: {detail}"`
+
+---
+
 ## 9. Bounded Context: Profile Performance
 
 > Package: `pe.edu.upc.soft.work.platform.profile.performance`
@@ -1956,9 +2076,13 @@ curl -X POST http://localhost:8092/api/v1/assets \
 
 #### GET `/api/v1/performances/{id}` — Get by ID
 
+#### GET `/api/v1/performances/employee/{employeeId}` — By employee profile
+
+**Response 200**: `PerformanceResponse[]`
+
 #### DELETE `/api/v1/performances/{id}` — Delete
 
-#### POST `/api/v1/performances/{performanceId}/comment-employees` — Add comment
+#### POST `/api/v1/performances/{performanceId}/comment-employee` — Add comment
 
 **Request** (`AddCommentEmployeeToPerformanceRequest`):
 ```json
@@ -1969,7 +2093,9 @@ curl -X POST http://localhost:8092/api/v1/assets \
 
 ---
 
-### 9.2 Comment Employees — `/api/v1/comment-employees`
+### 9.2 Comment Employees — `/api/v1/commentemployees`
+
+> **Note**: The route is `/api/v1/commentemployees` (no hyphens between words), not `/api/v1/comment-employees`.
 
 #### POST `/api/v1/comment-employees` — Create comment
 
@@ -2452,14 +2578,11 @@ spring.ai.google.genai.chat.temperature=0.4
 **Exposed endpoint**: `POST /api/v1/feedback-assistant` — documented in detail in
 [section 5.5](#55-employee-assistant-ai--apiv1feedback-assistant).
 
-> **`employeeAssistantChatClient` bean exists but is currently unused.** `ChatConfig.java` also
-> defines a second, more elaborate persona bean (`@Qualifier("employeeAssistantChatClient")`) with a
-> broader system prompt (policies, benefits, forum, surveys, performance — not just survey drafting).
-> `FeedbackAssistantController` / `FeedbackAssistantServiceImpl`, however, are still wired to the
-> **plain, unqualified** `chatClient` bean shown above, not to `employeeAssistantChatClient`. In
-> other words: the "Employee Assistant" persona bean is defined but not yet plugged into any
-> controller — the live `/api/v1/feedback-assistant` endpoint uses the older, survey-focused prompt.
-> This is worth knowing if answers seem narrower in scope than the "employee assistant" name implies.
+> **`employeeAssistantChatClient` is used by the Worker Forum's `EmployeeAssistantController`.**
+> `ChatConfig.java` defines a second, more elaborate persona bean (`@Qualifier("employeeAssistantChatClient")`)
+> with a broader system prompt (policies, benefits, forum, surveys, performance — not just survey drafting).
+> Unlike `FeedbackAssistantController` (which uses the plain `chatClient`), the Worker Forum's
+> `EmployeeAssistantController` routes through this bean. See [section 8.7](#87-employee-assistant-worker-forum--apiv1employee-assistant).
 
 **Internal response generation flow** (`FeedbackAssistantServiceImpl`):
 1. If `survey_id` is present in the request, the survey is looked up (`GetSurveyByIdQuery`) and a
@@ -2497,8 +2620,9 @@ public AssistantAnswer handle(AskFeedbackAssistantCommand command) {
 ### 11.4 Controllers Added
 
 | Controller | Base Route | Bounded Context | Purpose |
-|---|---|---|---|
+|---|---|---|---|---|
 | `StripePaymentController` | `/api/v1/payments/stripe` | Payment Service | Stripe checkout, retry, refund, webhook |
+| `EmployeeAssistantController` | `/api/v1/employee-assistant` | Worker Forum | AI assistant (Gemini) for **employees** — general company questions |
 | `FeedbackAssistantController` | `/api/v1/feedback-assistant` | Feedback | AI assistant (Gemini) for **employees** — surveys/feedback |
 | `DashboardAssistantController` | `/api/v1/dashboard-assistant` | Dashboard | AI assistant (Gemini) for **RRHH** — dashboard/climate diagnosis |
 
@@ -2748,7 +2872,7 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | IAM / UserAccount | ID | `userAccountId` | `user_account_id` |
 | IAM / UserAccount | anonymous name | `anonymousName` | `anonymous_name` |
 | IAM / EmployeeProfile | start date (request) | `dateStart` | `date_start` |
-| IAM / EmployeeProfile | start date (response) | `starStart` ⚠️ | `star_start` (**field typo, left intact**) |
+| IAM / EmployeeProfile | start date (response) | `dateStart` ⚠️ | `date_start` (**field typo, left intact**) |
 | IAM / RRHHProfile | department | `RRHHDepartment` ⚠️ | `rrhhdepartment` (**consecutive caps, no `_`**) |
 | IAM / RRHHProfile | hierarchy | `statusHierarchy` | `status_hierarchy` |
 | Dashboard / Company | ID | `companyId` | `company_id` (**typo `comapany_id` fixed**) |
@@ -2771,20 +2895,34 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Dashboard / AnalyzeDashboardRequest | company | `companyId` | `company_id` |
 | Dashboard / DashboardInsight | metrics | `metrics` ⚠️ | `metrics` (**inner keys stay camelCase — raw `Map`, not a DTO**) |
 | Payment / Membership | start | `membershipStart` | `membership_start` |
+| Payment / Membership | plan id | `membershipPlanId` | `membership_plan_id` |
 | Payment / Order | account | `userAccountId` | `user_account_id` |
 | Payment / Payment | transaction | `transactionId` | `transaction_id` |
+| Payment / Payment | status | `paymentStatus` | `payment_status` |
+| Payment / Payment | method | `paymentMethod` | `payment_method` |
 | Payment / MembershipPlan | name | `planName` | `plan_name` |
+| Payment / MembershipPlan | benefits | `benefitResponseList` ⚠️ | `benefit_response_list` (verbose Java name) |
 | Payment / Stripe Checkout | client secret | `clientSecret` | `client_secret` |
 | Payment / Stripe Refund | refund amount (request) | `refundAmountCents` | `refund_amount_cents` (**typo `refoundAmountCents` fixed**) |
 | Payment / Stripe Refund | refunded amount (response) | `refundedAmountCents` | `refunded_amount_cents` |
 | Notification / Detail | notification | `notificationId` | `notification_id` |
-| Forum / Thread | area | `areaCompanyId` | `area_company_id` |
 | Forum / Message | content | `contentMessage` | `content_message` |
+| Forum / Thread | messages | `messageResponses` ⚠️ | `message_responses` (verbose Java name) |
 | Forum / Asset | size | `fileSize` | `file_size` (response; not sent in the multipart request) |
 | Forum / Asset | type | `fileType` | `file_type` (JSON) / `fileType` (multipart form field) |
+| Forum / EmployeeAssistant | company | `companyId` | `company_id` |
+| Forum / EmployeeAssistant | prompt | `prompt` | `prompt` |
+| Forum / EmployeeAssistant | AI answer | `contentAnswer` | `content_answer` |
+| Report / Report | reason | `reason` | `reason` |
+| Report / Report | description | `description` | `description` |
+| Report / Report | report date | `reportDate` | `report_date` |
+| Report / Report | area | `areaCompanyId` | `area_company_id` |
 | Performance | employee | `employeeProfileId` | `employee_profile_id` |
 | Performance | date | `dateTime` | `date_time` |
 | CommentEmployee | RRHH | `rrhhProfileId` | `rrhh_profile_id` |
+| Feedback / SurveyResponse | commentary | `commentary` | `commentary` |
+| Feedback / SurveyResponse | cause | `cause` | `cause` |
+| Dashboard / Dashboard | ruc | `ruc` | `ruc` (lowercase — differs from Company's `RUC`) |
 
 > ⚠️ = the JSON key looks odd because the **Java field name** itself is misnamed. Those field names
 > were intentionally left untouched by the naming standardization.
@@ -2815,19 +2953,19 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Area Company | `/api/v1/area-company` | **singular** |
 | Dashboards | `/api/v1/dashboards` | |
 | Dashboard Assistant (AI) | `/api/v1/dashboard-assistant` | POST only, requires auth, **RRHH** |
-| Widgets | `/api/v1/widgets` | |
+| Widgets | `/api/v1/widgets` | `@Deprecated` — use sub-resource `POST /dashboards/{id}/widgets` |
 | Unit of Work | `/api/v1/unit-of-work` | **singular** |
 | Work Teams | `/api/v1/work-teams` | |
 | Surveys | `/api/v1/surveys` | |
 | Survey Responses | `/api/v1/survey-responses` | |
 | Question Surveys | `/api/v1/question-surveys` | |
-| Answers | `/api/v1/answers` | |
+| Answers | `/api/v1/answers` | `@Deprecated` — scheduled for removal |
 | Employee Assistant (AI) | `/api/v1/feedback-assistant` | POST only, requires auth, **Employee** (route unchanged — see [naming note](#55-employee-assistant-ai--apiv1feedback-assistant) in section 5.5) |
 | Orders | `/api/v1/orders` | |
 | Memberships | `/api/v1/memberships` | |
 | Payments (manual) | `/api/v1/payments` | Traditional CRUD |
 | Payments (Stripe) | `/api/v1/payments/stripe` | checkout, retry, refund, webhook |
-| Membership Plans | `/api/v1/membership-plans` | |
+| Membership Plans | `/api/v1/memberships-plans` | plural of both words |
 | Benefits | `/api/v1/benefits` | |
 | Notifications | `/api/v1/notifications` | |
 | Notification Details | `/api/v1/notification-details` | |
@@ -2837,8 +2975,9 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Messages | `/api/v1/messages` | |
 | Assets | `/api/v1/assets` | creation via multipart + Cloudinary |
 | Reports | `/api/v1/reports` | |
-| Performances | `/api/v1/performances` | |
-| Comment Employees | `/api/v1/comment-employees` | |
+| Employee Assistant (Forum) | `/api/v1/employee-assistant` | POST only, requires auth, **Employee** — general company questions |
+| Performances | `/api/v1/performances` | also: `GET /employee/{employeeId}` |
+| Comment Employees | `/api/v1/commentemployees` | route has **no hyphens** |
 
 ### Sub-resources (linking operations) — snake_case bodies
 
@@ -2850,11 +2989,13 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | `/api/v1/unit-of-work/{id}/work-teams` | POST | `{"work_team_id": 1}` |
 | `/api/v1/dashboards/{id}/widgets` | POST | `{"widget_id": 1}` |
 | `/api/v1/forums/{id}/categories` | POST | `{"category_id": 1}` |
+| `/api/v1/forums/company/{companyId}` | GET | — |
+| `/api/v1/performances/employee/{employeeId}` | GET | — |
 | `/api/v1/categories/{id}/threads` | POST | `{"thread_id": 1}` |
 | `/api/v1/threads/{id}/messages` | POST | `{"message_id": 1}` |
 | `/api/v1/messages/{id}/assets` | POST | `{"asset_id": 1}` |
-| `/api/v1/membership-plans/{id}/benefits` | POST | `{"benefit_id": 1}` |
-| `/api/v1/performances/{id}/comment-employees` | POST | `{"comment_id": 1}` |
+| `/api/v1/memberships-plans/{id}/benefits` | POST | `{"benefit_id": 1}` |
+| `/api/v1/performances/{id}/comment-employee` | POST | `{"comment_id": 1}` |
 
 ### External Service Endpoints (quick reference)
 
@@ -2868,5 +3009,6 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | `/api/v1/payments/stripe/{paymentId}/retry` | POST | JWT | `application/json` | Retry a failed payment |
 | `/api/v1/payments/stripe/{paymentId}/refund` | POST | JWT | `application/json` | Initiate a refund |
 | `/api/v1/payments/stripe/webhook` | POST | **Stripe signature** (no JWT) | `application/json` | Receive asynchronous Stripe events |
-| `/api/v1/feedback-assistant` | POST | JWT | `application/json` | Query the Employee Assistant (Gemini) — survey/feedback help |
+| `/api/v1/feedback-assistant` | POST | JWT | `application/json` | Query the Feedback Assistant (Gemini) — survey/feedback help |
+| `/api/v1/employee-assistant` | POST | JWT | `application/json` | Query the Employee Assistant (Gemini) — general company questions |
 | `/api/v1/dashboard-assistant` | POST | JWT | `application/json` | Query the Dashboard Assistant (Gemini) — RRHH climate diagnosis |
