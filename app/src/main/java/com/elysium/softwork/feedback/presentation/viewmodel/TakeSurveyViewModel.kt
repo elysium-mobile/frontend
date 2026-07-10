@@ -126,7 +126,13 @@ class TakeSurveyViewModel(
         viewModelScope.launch {
             submitSurveyResponse(surveyId = currentSurveyId, commentary = commentary, cause = cause)
                 .onSuccess {
+                    // HTTP 201 confirmed: invalidate both the captured answers (form input) and
+                    // the loaded question set (question state) before signalling the pop. The
+                    // `submitted` latch drives the navigation pop; the screen gates its empty-state
+                    // on `!submitted` so clearing the questions here never flashes the "no
+                    // questions" placeholder on the outgoing frame.
                     _answers.value = emptyMap()
+                    _questions.value = emptyList()
                     _submitted.value = true
                 }
                 .onFailure { _errorMessage.value = resolveError(it) }

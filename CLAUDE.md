@@ -1233,10 +1233,16 @@ The previously-unwired `onStartSurvey` no-op is now a real destination.
   RATING/MULTIPLE_CHOICE answers, else `"GENERAL"`). This fold is dictated by the `survey-responses`
   contract having **no per-question answer array** — only `survey_id` / `employee_profile_id` /
   `submitted_at` / `commentary` / `cause`. Submission reuses `SubmitSurveyResponseUseCase` (resolves
-  `employee_profile_id` from prefs, defaults `submitted_at`); on HTTP 201 the form clears and a
-  `submitted` latch pops the screen back to `PendingSurveysScreen`.
-- **Follow-up**: when the backend exposes a per-question answer resource, move submission there —
-  the screen/VM answer-collection stays; only the fold + endpoint change.
+  `employee_profile_id` from prefs, defaults `submitted_at`); on HTTP 201 **both** the answers (form
+  input) and the loaded question set (question state) are invalidated and a `submitted` latch pops
+  the screen back to `PendingSurveysScreen` (the screen gates its empty-state on `!isLoading &&
+  !submitted` so neither the initial load nor the post-submit teardown flashes the placeholder).
+- **Single persistence endpoint — `/api/v1/answers` deliberately excluded.** Submission is exactly
+  one POST to `/api/v1/survey-responses`; the deprecated per-answer `/api/v1/answers` route is never
+  referenced anywhere in the app (no `AnswerWebService`, no per-question loop). The client-side fold
+  into `commentary`/`cause` is what makes the single-endpoint path sufficient. Do not reintroduce a
+  per-answer route — if the backend later ships a per-question answer resource, replace the fold with
+  it, keeping submission a single call.
 
 ### ✅ Phase 11 — Notifications backend integration against the live Spring Boot API
 

@@ -1021,6 +1021,8 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 
 > Package: `pe.edu.upc.soft.work.platform.feedback`
 > All DTOs annotated with `@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)`.
+> **Auth**: all endpoints require `Authorization: Bearer <JWT>` (see section 2 for sign-in).
+> **CORS**: all CRUD controllers allow `GET, POST, PUT, DELETE` from any origin.
 
 ---
 
@@ -1033,32 +1035,39 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 {
   "title": "Workplace Climate Survey",
   "description": "Quarterly assessment",
-  "target_type": "ALL_EMPLOYEES",
-  "expiration_time": "2026-12-31"
+  "target_type": "AREA_COMPANY",
+  "expiration_time": "2026-12-31T23:59:59"
 }
 ```
 
-> **FIXED**: previously the request key was `expirationType` (a copy-paste bug in an `@JsonProperty`)
-> while the field is `expirationTime`. Now request and response both use `expiration_time`.
+`target_type` valid values: `AREA_COMPANY`, `UNIT_OF_WORK`, `TEAM_OF_WORK`.
 
-**Response 200** (`SurveyResponse`):
+**Response 201** (`SurveyResponse`):
 ```json
 {
   "survey_id": 1,
   "title": "Workplace Climate Survey",
   "description": "Quarterly assessment",
-  "target_type": "ALL_EMPLOYEES",
-  "expiration_time": "2026-12-31"
+  "target_type": "AREA_COMPANY",
+  "expiration_time": "2026-12-31T23:59:59"
 }
 ```
 
 #### PUT `/api/v1/surveys/{id}` — Update
 
+**Request** (`UpdateSurveyRequest`): same structure as Create. **Response 200**: `SurveyResponse`.
+
 #### GET `/api/v1/surveys` — List all
+
+**Response 200**: `SurveyResponse[]`
 
 #### GET `/api/v1/surveys/{id}` — Get by ID
 
+**Response 200**: `SurveyResponse` | **404** if not found.
+
 #### DELETE `/api/v1/surveys/{id}` — Delete
+
+**Response 204**: no content.
 
 ---
 
@@ -1071,11 +1080,13 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 {
   "survey_id": 1,
   "employee_profile_id": 3,
-  "submitted_at": "2026-06-19",
+  "submitted_at": "2026-06-19T10:00:00",
   "commentary": "Good work environment",
   "cause": "Teamwork"
 }
 ```
+
+**Backend validations**: Survey must exist; Employee Profile must exist (checked via IAM ACL); Survey must not be expired; Employee must not have already responded to this survey.
 
 **Response 201** (`SurveyResponseResponse`):
 ```json
@@ -1083,7 +1094,7 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
   "survey_response_id": 1,
   "survey_id": 1,
   "employee_profile_id": 3,
-  "submitted_at": "2026-06-19",
+  "submitted_at": "2026-06-19T10:00:00",
   "commentary": "Good work environment",
   "cause": "Teamwork"
 }
@@ -1091,11 +1102,23 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 
 #### PUT `/api/v1/survey-responses/{id}` — Update
 
+**Request** (`UpdateSurveyResponseRequest`): same structure as Create. **Response 200**: `SurveyResponseResponse`.
+
 #### GET `/api/v1/survey-responses` — List
+
+**Response 200**: `SurveyResponseResponse[]`
 
 #### GET `/api/v1/survey-responses/{id}` — Get by ID
 
+**Response 200**: `SurveyResponseResponse` | **404** if not found.
+
+#### GET `/api/v1/survey-responses/survey/{surveyId}` — By survey
+
+**Response 200**: `SurveyResponseResponse[]` (filtered client-side in the current implementation).
+
 #### DELETE `/api/v1/survey-responses/{id}` — Delete
+
+**Response 204**: no content.
 
 ---
 
@@ -1107,28 +1130,38 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 ```json
 {
   "text_question": "How would you rate the work environment?",
-  "question_type": "SCALE",
+  "question_type": "RATING",
   "survey_id": 1
 }
 ```
+
+`question_type` valid values: `OPEN_SURVEY`, `MULTIPLE_CHOICE`, `RATING`.
 
 **Response 201** (`QuestionSurveyResponse`):
 ```json
 {
   "question_survey_id": 1,
   "text_question": "How would you rate the work environment?",
-  "question_type": "SCALE",
+  "question_type": "RATING",
   "survey_id": 1
 }
 ```
 
 #### PUT `/api/v1/question-surveys/{id}` — Update
 
+**Request** (`UpdateQuestionSurveyRequest`): same structure as Create. **Response 200**: `QuestionSurveyResponse`.
+
 #### GET `/api/v1/question-surveys` — List
+
+**Response 200**: `QuestionSurveyResponse[]`
 
 #### GET `/api/v1/question-surveys/{id}` — Get by ID
 
+**Response 200**: `QuestionSurveyResponse` | **404** if not found.
+
 #### DELETE `/api/v1/question-surveys/{id}` — Delete
+
+**Response 204**: no content.
 
 ---
 
@@ -1147,21 +1180,27 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 **Response 201** (`AnswerResponse`):
 ```json
 {
-  "id": 1,
+  "answer_id": 1,
   "value": 5,
   "score_answer": 10
 }
 ```
 
-> Note: here the ID field is called `id`, not `answer_id`.
-
 #### PUT `/api/v1/answers/{id}` — Update
+
+**Request** (`UpdateAnswerRequest`): same structure as Create. **Response 200**: `AnswerResponse`.
 
 #### GET `/api/v1/answers` — List
 
+**Response 200**: `AnswerResponse[]`
+
 #### GET `/api/v1/answers/{id}` — Get by ID
 
+**Response 200**: `AnswerResponse` | **404** if not found.
+
 #### DELETE `/api/v1/answers/{id}` — Delete
+
+**Response 204**: no content.
 
 ---
 
@@ -1210,6 +1249,95 @@ curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
 **Errors**:
 - `400 Bad Request` (`IllegalArgumentException` → `BadRequestResponse`): if `prompt` is null or blank → message `"Prompt must not be empty."`
 - `500 Internal Server Error`: if the AI model call fails → message `"Error generating assistant response: {detail}"`
+
+---
+
+### 5.6 Connection Flow — Frontend Integration Guide
+
+#### 5.6.1 Authentication Flow
+
+Every Feedback endpoint requires a JWT token. The flow is:
+
+```
+1. POST /api/v1/authentication/sign-in  ──►  { "token": "eyJ..." }
+         { "email": "...", "password": "..." }
+         
+2. Use the token in every subsequent request:
+   Authorization: Bearer eyJ...
+```
+
+#### 5.6.2 Typical Business Flow
+
+The Feedback context follows this logical order:
+
+```
+[RRHH / Admin]           [Employee]
+
+1. POST /api/v1/surveys  ────────────────────── Creates a survey
+2. POST /api/v1/question-surveys (x N) ──────── Adds questions to the survey
+3.                                           │  Employee receives notification
+4.                     POST /api/v1/survey-responses  ── Submits answers
+5.                     POST /api/v1/answers (x N) ───── Individual answer scores
+6. POST /api/v1/feedback-assistant  ─────────── AI analysis (optional)
+```
+
+#### 5.6.3 Example Connection (cURL)
+
+```bash
+BASE="http://localhost:8092"
+
+# 1. Sign in (any valid user)
+TOKEN=$(curl -s -X POST "$BASE/api/v1/authentication/sign-in" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"carlos.ramirez@techcorp.pe","password":"password123"}' | jq -r '.token')
+
+AUTH="Authorization: Bearer $TOKEN"
+
+# 2. Create a survey
+SURVEY_ID=$(curl -s -X POST "$BASE/api/v1/surveys" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{
+    "title": "Q1 Climate Survey",
+    "description": "Quarterly evaluation",
+    "target_type": "AREA_COMPANY",
+    "expiration_time": "2026-12-31T23:59:59"
+  }' | jq -r '.survey_id')
+
+# 3. Add a question to the survey
+curl -s -X POST "$BASE/api/v1/question-surveys" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{
+    \"text_question\": \"Rate your satisfaction\",
+    \"question_type\": \"RATING\",
+    \"survey_id\": $SURVEY_ID
+  }"
+
+# 4. List all surveys (employee side)
+curl -s -X GET "$BASE/api/v1/surveys" -H "$AUTH"
+
+# 5. Submit a survey response
+curl -s -X POST "$BASE/api/v1/survey-responses" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d "{
+    \"survey_id\": $SURVEY_ID,
+    \"employee_profile_id\": 1,
+    \"submitted_at\": \"2026-07-10T10:00:00\",
+    \"commentary\": \"Great environment\",
+    \"cause\": \"Teamwork\"
+  }"
+```
+
+#### 5.6.4 Frontend Implementation Notes
+
+| Aspect | Detail |
+|---|---|
+| **Base URL** | `http://localhost:8092` (dev) or `${API_HOST}` (prod) |
+| **Naming** | Always use `snake_case` in JSON request bodies |
+| **Dates** | Send ISO 8601: `"2026-07-10T10:00:00"` |
+| **Error handling** | Parse the `field_errors` map for validation failures (see section 10) |
+| **Survey creation** | Only RRHH/admin profiles should have access to create surveys |
+| **Response submission** | One response per survey per employee (backend rejects duplicates) |
+| **IDs** | Create endpoints return the new ID in the response body (e.g. `survey_id`, `answer_id`) |
 
 ---
 
@@ -2632,8 +2760,12 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Dashboard / WorkTeam | name | `teamName` | `team_name` |
 | Dashboard / WorkTeam | leader | `leaderOfTeam` | `leader_of_team` |
 | Feedback / Survey | target type | `targetType` | `target_type` |
-| Feedback / Survey | expiration | `expirationTime` | `expiration_time` (**`expirationType` mismatch fixed**) |
+| Feedback / Survey | expiration | `expirationTime` | `expiration_time` |
+| Feedback / SurveyResponse | response ID | `surveyResponseId` | `survey_response_id` |
+| Feedback / SurveyResponse | submitted at | `submittedAt` | `submitted_at` |
+| Feedback / QuestionSurvey | question ID | `questionSurveyId` | `question_survey_id` |
 | Feedback / QuestionSurvey | text | `textQuestion` | `text_question` |
+| Feedback / Answer | answer ID | `answerId` | `answer_id` |
 | Feedback / Answer | score | `scoreAnswer` | `score_answer` |
 | Feedback / AssistantAnswer | AI answer | `contentAnswer` | `content_answer` |
 | Dashboard / AnalyzeDashboardRequest | company | `companyId` | `company_id` |

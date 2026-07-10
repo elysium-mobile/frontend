@@ -72,6 +72,7 @@ fun TakeSurveyScreen(
 ) {
     val questions: List<QuestionSurvey> by viewModel.questions.collectAsStateWithLifecycle()
     val answers: Map<Long, String> by viewModel.answers.collectAsStateWithLifecycle()
+    val isLoading: Boolean by viewModel.isLoading.collectAsStateWithLifecycle()
     val isSubmitting: Boolean by viewModel.isSubmitting.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
     val submitted: Boolean by viewModel.submitted.collectAsStateWithLifecycle()
@@ -116,7 +117,7 @@ fun TakeSurveyScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (questions.isEmpty()) {
+            if (!isLoading && !submitted && questions.isEmpty()) {
                 item(key = "empty") {
                     Text(
                         text = stringResource(R.string.take_survey_empty),
