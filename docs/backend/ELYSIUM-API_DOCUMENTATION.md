@@ -928,6 +928,95 @@ Google authentication is split into two phases so that **no user data is ever mo
 
 ---
 
+### 4.7 Dashboard Assistant (AI) — `/api/v1/dashboard-assistant`
+
+> Endpoint powered by Google Gemini (`gemini-2.5-flash`), reserved for **RRHH**. See the full
+> technical details of this integration in
+> [section 11.6](#116-google-gemini--spring-ai-dashboard-assistant).
+>
+> This is the **RRHH-facing** counterpart of the [Employee Assistant](#55-employee-assistant-ai--apiv1feedback-assistant)
+> (`/api/v1/feedback-assistant`): the two endpoints were split so that each AI persona is scoped to
+> the profile that consumes it — employees get help with policies/surveys/forum, RRHH gets a data
+> diagnosis of the company's climate. Controller: `DashboardAssistantController`.
+
+#### POST `/api/v1/dashboard-assistant` — Analyze a company's dashboard
+
+**Auth**: requires `Authorization: Bearer <JWT>` (not in the public allowlist).
+**CORS**: only `POST` is enabled.
+
+**Request** (`AnalyzeDashboardRequest`):
+```json
+{
+  "company_id": 1,
+  "question": "Why did forum activity drop in the QA area last month?"
+}
+```
+
+| JSON Key | Java Field | Type | Validation | Notes |
+|---|---|---|---|---|
+| `company_id` | `companyId` | Long | Must reference an existing `Company` | `NoSuchElementException` if not found → `500` |
+| `question` | `question` | String | Optional (nullable) | If omitted/blank, the assistant runs a general climate diagnosis instead of answering a specific question |
+
+**What happens server-side** (`DashboardAssistantServiceImpl`): the service gathers 4 metrics for the
+company — average performance, positive-survey rate, report count, forum activity — computes a
+**deterministic** status label from thresholds (not from the AI), then asks Gemini to explain that
+status and give recommendations, injecting the raw metrics + the optional `question` into the prompt.
+
+**Response 200** (`DashboardInsightResponse`):
+```json
+{
+  "status": "REGULAR",
+  "analysis": "El clima laboral se encuentra en un estado regular. El desempeño promedio (3.1/5) y la tasa de encuestas positivas (58%) están dentro de rangos aceptables, pero no óptimos...\n\nRecomendaciones:\n- Revisar la carga de trabajo del área de QA...\n- Fomentar espacios de feedback...",
+  "metrics": {
+    "averagePerformance": 3.1,
+    "totalEvaluations": 5,
+    "positiveSurveyRate": 58.0,
+    "totalSurveyAnswers": 5,
+    "totalReports": 3,
+    "reportsByArea": [
+      { "areaId": 1, "areaName": "Desarrollo de Software", "reportCount": 2 },
+      { "areaId": 2, "areaName": "Control de Calidad", "reportCount": 1 }
+    ],
+    "totalForumMessages": 6,
+    "forumActivityByArea": [
+      { "areaId": 1, "areaName": "Desarrollo de Software", "threadCount": 1, "messageCount": 2 },
+      { "areaId": 2, "areaName": "Control de Calidad", "threadCount": 1, "messageCount": 1 }
+    ]
+  }
+}
+```
+
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `status` | `status` | String | One of `"BUENO"`, `"REGULAR"`, `"CRITICO"` — computed in code from the metrics thresholds, not by the AI |
+| `analysis` | `analysis` | String | AI-generated explanation + recommendations, always in Spanish |
+| `metrics` | `metrics` | `Map<String, Object>` | Raw metrics used to build the analysis — **see naming warning below** |
+
+> ⚠️ **`metrics` is a plain `Map<String, Object>` built in Java code, not a DTO.** Jackson's
+> `@JsonNaming(SnakeCaseStrategy)` only rewrites **declared record/bean properties** — it does
+> **not** touch runtime `Map` keys. So while the top-level response fields (`status`, `analysis`,
+> `metrics`) are snake_case, **every key inside `metrics` — and inside the nested `reports_by_area`/
+> `forum_activity_by_area` list items — stays camelCase exactly as written in
+> `DashboardAssistantServiceImpl`**: `averagePerformance`, `totalEvaluations`, `positiveSurveyRate`,
+> `totalSurveyAnswers`, `totalReports`, `reportsByArea` (list of `{areaId, areaName, reportCount}`),
+> `totalForumMessages`, `forumActivityByArea` (list of `{areaId, areaName, threadCount, messageCount}`).
+> Frontend clients must read `metrics.averagePerformance`, **not** `metrics.average_performance`.
+> This mirrors the existing Stripe `metadata` quirk documented in
+> [section 11.2](#112-stripe--online-payments).
+
+**Errors**:
+- `500 Internal Server Error`: `company_id` does not exist (`NoSuchElementException: Company not found: {id}`), or the AI model call fails (`"Error generating dashboard analysis: {detail}"`)
+
+**Frontend integration example (curl)**:
+```bash
+curl -X POST http://localhost:8092/api/v1/dashboard-assistant \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"company_id":1,"question":"How is the team doing this quarter?"}'
+```
+
+---
+
 ## 5. Bounded Context: Feedback
 
 > Package: `pe.edu.upc.soft.work.platform.feedback`
@@ -1076,13 +1165,22 @@ Google authentication is split into two phases so that **no user data is ever mo
 
 ---
 
-### 5.5 Feedback Assistant (AI) — `/api/v1/feedback-assistant`
+### 5.5 Employee Assistant (AI) — `/api/v1/feedback-assistant`
 
 > Endpoint powered by Google Gemini (`gemini-2.5-flash`). See the full technical details
-> of this integration in [section 11.3](#113-google-gemini--spring-ai-feedback-assistant).
+> of this integration in [section 11.3](#113-google-gemini--spring-ai-employee-assistant).
+>
+> **Naming note**: the AI assistant endpoints are split by profile — this one (implemented by
+> `FeedbackAssistantController`, route unchanged at `/api/v1/feedback-assistant`) is the
+> **employee-facing** assistant (survey/feedback help), while
+> [`/api/v1/dashboard-assistant`](#47-dashboard-assistant-ai--apiv1dashboard-assistant) is the
+> **RRHH-facing** one (dashboard/climate diagnosis). The Java class name and route were **not**
+> renamed to `/api/v1/employee-assistant` — this document refers to it as "Employee Assistant" to
+> reflect its actual usage, not its literal route.
 
 #### POST `/api/v1/feedback-assistant` — Ask the assistant
 
+**Auth**: requires `Authorization: Bearer <JWT>` (not in the public allowlist).
 **CORS**: only `POST` is enabled (unlike other controllers which allow GET/POST/PUT/DELETE).
 
 **Request** (`AskAssistantRequest`):
@@ -2191,7 +2289,7 @@ Error processing webhook: {detail}
 
 ---
 
-### 11.3 Google Gemini / Spring AI — Feedback Assistant
+### 11.3 Google Gemini / Spring AI — Employee Assistant
 
 **Configuration** (`ChatConfig.java`):
 ```java
@@ -2224,7 +2322,16 @@ spring.ai.google.genai.chat.temperature=0.4
   of the language of the incoming `prompt`.
 
 **Exposed endpoint**: `POST /api/v1/feedback-assistant` — documented in detail in
-[section 5.5](#55-feedback-assistant-ai--apiv1feedback-assistant).
+[section 5.5](#55-employee-assistant-ai--apiv1feedback-assistant).
+
+> **`employeeAssistantChatClient` bean exists but is currently unused.** `ChatConfig.java` also
+> defines a second, more elaborate persona bean (`@Qualifier("employeeAssistantChatClient")`) with a
+> broader system prompt (policies, benefits, forum, surveys, performance — not just survey drafting).
+> `FeedbackAssistantController` / `FeedbackAssistantServiceImpl`, however, are still wired to the
+> **plain, unqualified** `chatClient` bean shown above, not to `employeeAssistantChatClient`. In
+> other words: the "Employee Assistant" persona bean is defined but not yet plugged into any
+> controller — the live `/api/v1/feedback-assistant` endpoint uses the older, survey-focused prompt.
+> This is worth knowing if answers seem narrower in scope than the "employee assistant" name implies.
 
 **Internal response generation flow** (`FeedbackAssistantServiceImpl`):
 1. If `survey_id` is present in the request, the survey is looked up (`GetSurveyByIdQuery`) and a
@@ -2264,7 +2371,8 @@ public AssistantAnswer handle(AskFeedbackAssistantCommand command) {
 | Controller | Base Route | Bounded Context | Purpose |
 |---|---|---|---|
 | `StripePaymentController` | `/api/v1/payments/stripe` | Payment Service | Stripe checkout, retry, refund, webhook |
-| `FeedbackAssistantController` | `/api/v1/feedback-assistant` | Feedback | AI assistant (Gemini) for surveys |
+| `FeedbackAssistantController` | `/api/v1/feedback-assistant` | Feedback | AI assistant (Gemini) for **employees** — surveys/feedback |
+| `DashboardAssistantController` | `/api/v1/dashboard-assistant` | Dashboard | AI assistant (Gemini) for **RRHH** — dashboard/climate diagnosis |
 
 The `AssetController` (`/api/v1/assets`) already existed, but its `POST` endpoint changed from a
 JSON DTO to `multipart/form-data` to integrate with Cloudinary. The `AuthenticationController`
@@ -2309,6 +2417,58 @@ throws `IllegalArgumentException` → `400 Bad Request`. The verified claims (`s
 > user completes one of the Google sign-up endpoints, with real data and a random encoded password
 > (Google is the only login path for those accounts; `membership_id`/`company_id` default to `0`,
 > matching the classic sign-up).
+
+---
+
+### 11.6 Google Gemini / Spring AI — Dashboard Assistant
+
+**Configuration** (`ChatConfig.java`, `dashboardAssistantChatClient` bean):
+```java
+@Bean
+@Qualifier("dashboardAssistantChatClient")
+public ChatClient dashboardAssistantChatClient(ChatModel chatModel){
+  return ChatClient.builder(chatModel).defaultSystem("""
+        Eres un analista de datos experto en clima y ambiente laboral, que apoya a
+        gerentes y encargados de Recursos Humanos (RRHH) a interpretar las métricas
+        del dashboard de su empresa (desempeño promedio, porcentaje de encuestas
+        positivas, cantidad de reportes/incidencias y actividad en el foro de trabajadores).
+        A partir de los datos entregados debes:
+        1) Explicar brevemente cómo está el ambiente laboral y por qué, citando las métricas relevantes.
+        2) Señalar posibles riesgos o señales de alerta si los hay.
+        3) Dar 2 o 3 recomendaciones prácticas y accionables para RRHH.
+        No inventes datos que no se te hayan entregado.
+        Responde siempre en español, en formato breve y estructurado (usa viñetas cuando ayude a la claridad).
+      """).build();
+}
+```
+
+Same `spring.ai.google.genai.*` properties as [section 11.3](#113-google-gemini--spring-ai-employee-assistant)
+(shared `gemini-2.5-flash` model / `0.4` temperature) — only the system prompt persona differs, via a
+separate, explicitly `@Qualifier`-ed `ChatClient` bean.
+
+**Exposed endpoint**: `POST /api/v1/dashboard-assistant` — documented in detail in
+[section 4.7](#47-dashboard-assistant-ai--apiv1dashboard-assistant).
+
+**Internal response generation flow** (`DashboardAssistantServiceImpl`):
+1. Gathers 4 metrics for `company_id` via `DashboardQueryService`: average performance
+   (`GetAveragePerformanceByCompanyQuery`), positive-survey rate (`GetPositiveSurveyRateByCompanyQuery`,
+   threshold `>= 3`), report count by area (`GetReportCountByCompanyQuery`), forum activity by area
+   (`GetForumActivityByCompanyQuery`).
+2. Computes a **deterministic** `status` in code (not by the AI):
+   | Rule | Status |
+   |---|---|
+   | `averagePerformance >= 3.5` **and** `positiveRate >= 70%` | `"BUENO"` |
+   | `averagePerformance < 2.5` **or** `positiveRate < 40%` | `"CRITICO"` |
+   | otherwise | `"REGULAR"` |
+3. Builds a Spanish-language prompt embedding the status + all metrics + the optional `question`,
+   and sends it to the `dashboardAssistantChatClient`.
+4. Returns a `DashboardInsight(status, analysis, metrics)` — `status` is the code-computed label,
+   `analysis` is the AI's free-text response, `metrics` is the raw data map (see the camelCase-keys
+   warning in [section 4.7](#47-dashboard-assistant-ai--apiv1dashboard-assistant)).
+
+> If `company_id` does not reference an existing company, `dashboardQueryService` throws
+> `NoSuchElementException` **before** the AI is ever called — unlike the Employee Assistant's
+> `survey_id`, there is no silent-fallback behavior here.
 
 ---
 
@@ -2476,6 +2636,8 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Feedback / QuestionSurvey | text | `textQuestion` | `text_question` |
 | Feedback / Answer | score | `scoreAnswer` | `score_answer` |
 | Feedback / AssistantAnswer | AI answer | `contentAnswer` | `content_answer` |
+| Dashboard / AnalyzeDashboardRequest | company | `companyId` | `company_id` |
+| Dashboard / DashboardInsight | metrics | `metrics` ⚠️ | `metrics` (**inner keys stay camelCase — raw `Map`, not a DTO**) |
 | Payment / Membership | start | `membershipStart` | `membership_start` |
 | Payment / Order | account | `userAccountId` | `user_account_id` |
 | Payment / Payment | transaction | `transactionId` | `transaction_id` |
@@ -2497,6 +2659,14 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 >
 > **Multipart note**: `POST /api/v1/assets` uses `@RequestParam` form fields, which are NOT governed
 > by `@JsonNaming`. Its form fields remain `messageId`, `name`, `fileType`, `file`.
+>
+> **`metrics` note**: `DashboardInsightResponse.metrics` is a `Map<String, Object>` populated
+> programmatically in `DashboardAssistantServiceImpl` (`averagePerformance`, `totalEvaluations`,
+> `positiveSurveyRate`, `totalSurveyAnswers`, `totalReports`, `reportsByArea`, `totalForumMessages`,
+> `forumActivityByArea`, and the nested `areaId`/`areaName`/`reportCount`/`threadCount`/
+> `messageCount` list entries) — like the Stripe `metadata` map, its keys are **not** rewritten by
+> `@JsonNaming` and stay camelCase. See [section 4.7](#47-dashboard-assistant-ai--apiv1dashboard-assistant)
+> for the full example payload.
 
 ---
 
@@ -2512,6 +2682,7 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Companies | `/api/v1/companies` | |
 | Area Company | `/api/v1/area-company` | **singular** |
 | Dashboards | `/api/v1/dashboards` | |
+| Dashboard Assistant (AI) | `/api/v1/dashboard-assistant` | POST only, requires auth, **RRHH** |
 | Widgets | `/api/v1/widgets` | |
 | Unit of Work | `/api/v1/unit-of-work` | **singular** |
 | Work Teams | `/api/v1/work-teams` | |
@@ -2519,7 +2690,7 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Survey Responses | `/api/v1/survey-responses` | |
 | Question Surveys | `/api/v1/question-surveys` | |
 | Answers | `/api/v1/answers` | |
-| Feedback Assistant (AI) | `/api/v1/feedback-assistant` | POST only, requires auth |
+| Employee Assistant (AI) | `/api/v1/feedback-assistant` | POST only, requires auth, **Employee** (route unchanged — see [naming note](#55-employee-assistant-ai--apiv1feedback-assistant) in section 5.5) |
 | Orders | `/api/v1/orders` | |
 | Memberships | `/api/v1/memberships` | |
 | Payments (manual) | `/api/v1/payments` | Traditional CRUD |
@@ -2565,4 +2736,5 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | `/api/v1/payments/stripe/{paymentId}/retry` | POST | JWT | `application/json` | Retry a failed payment |
 | `/api/v1/payments/stripe/{paymentId}/refund` | POST | JWT | `application/json` | Initiate a refund |
 | `/api/v1/payments/stripe/webhook` | POST | **Stripe signature** (no JWT) | `application/json` | Receive asynchronous Stripe events |
-| `/api/v1/feedback-assistant` | POST | JWT | `application/json` | Query the AI assistant (Gemini) |
+| `/api/v1/feedback-assistant` | POST | JWT | `application/json` | Query the Employee Assistant (Gemini) — survey/feedback help |
+| `/api/v1/dashboard-assistant` | POST | JWT | `application/json` | Query the Dashboard Assistant (Gemini) — RRHH climate diagnosis |

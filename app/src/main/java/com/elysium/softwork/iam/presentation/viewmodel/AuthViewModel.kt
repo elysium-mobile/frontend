@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.elysium.softwork.SoftWorkApplication
 import com.elysium.softwork.iam.application.AuthState
 import com.elysium.softwork.iam.application.AuthValidation
+import com.elysium.softwork.iam.application.usecase.CompleteGoogleSignUpUseCase
 import com.elysium.softwork.iam.application.usecase.LoginUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterWithGoogleUseCase
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
 
 /**
  * UI state holder for the IAM flows (login, register).
@@ -36,13 +38,15 @@ import kotlinx.coroutines.launch
  * @param loginUseCase signs the worker in with corporate credentials.
  * @param registerUseCase registers a new employee account.
  * @param registerWithGoogleUseCase registers a Google-linked employee (same backend endpoint).
- * @param signInWithGoogleUseCase triggers the native Credential Manager Google sign-in tray.
+ * @param signInWithGoogleUseCase triggers the native Credential Manager Google sign-in tray (Phase 1).
+ * @param completeGoogleSignUpUseCase completes the Google profile registration (Phase 2).
  */
 class AuthViewModel(
     private val loginUseCase: LoginUseCase,
     private val registerUseCase: RegisterUseCase,
     private val registerWithGoogleUseCase: RegisterWithGoogleUseCase,
     private val signInWithGoogleUseCase: SignInWithGoogleUseCase,
+    private val completeGoogleSignUpUseCase: CompleteGoogleSignUpUseCase,
 ) : ViewModel() {
 
     /** Snapshot of the current form. Updated via the `on*Change` handlers. */
@@ -62,11 +66,37 @@ class AuthViewModel(
         val isUsernameValid: Boolean get() = AuthValidation.isUsernameValid(username)
     }
 
+    /**
+     * Buffer for the Google Phase-2 profile-completion form. Collects only the fields the backend
+     * `sign-up/employee/google` endpoint needs — email/password/anonymous_name are derived from
+     * the verified token server-side, so they are never captured here.
+     */
+    data class GoogleSignUpForm(
+        val name: String = "",
+        val lastName: String = "",
+        val phoneNumber: String = "",
+        val dni: String = "",
+        val dateStart: String = Instant.now().toString(),
+        val position: String = "",
+        val salary: String = "",
+    ) {
+        /** Every field required (@NotNull/@NotBlank server-side); salary must be numeric. */
+        val isValid: Boolean
+            get() = name.isNotBlank() && lastName.isNotBlank() && phoneNumber.isNotBlank() &&
+                dni.isNotBlank() && dni.length == 8 && dateStart.isNotBlank() &&
+                    position.isNotBlank() && salary.toIntOrNull() != null
+    }
+
     private val _state: MutableStateFlow<AuthState> = MutableStateFlow(AuthState.Idle)
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
     private val _form: MutableStateFlow<FormState> = MutableStateFlow(FormState())
     val form: StateFlow<FormState> = _form.asStateFlow()
+
+    private val _googleForm: MutableStateFlow<GoogleSignUpForm> = MutableStateFlow(GoogleSignUpForm())
+
+    /** Current Google Phase-2 profile-completion form values. */
+    val googleForm: StateFlow<GoogleSignUpForm> = _googleForm.asStateFlow()
 
     // region Form handlers
     fun onUsernameChange(value: String) {
@@ -97,6 +127,18 @@ class AuthViewModel(
     fun consumeState() {
         _state.value = AuthState.Idle
         _form.value = _form.value.copy(fieldError = null)
+    }
+    // endregion
+
+    // region Google Phase-2 form handlers
+    fun onGoogleNameChange(value: String) { _googleForm.value = _googleForm.value.copy(name = value) }
+    fun onGoogleLastNameChange(value: String) { _googleForm.value = _googleForm.value.copy(lastName = value) }
+    fun onGooglePhoneChange(value: String) { _googleForm.value = _googleForm.value.copy(phoneNumber = value) }
+    fun onGoogleDniChange(value: String) { _googleForm.value = _googleForm.value.copy(dni = value) }
+    fun onGoogleDateStartChange(value: String) { _googleForm.value = _googleForm.value.copy(dateStart = value) }
+    fun onGooglePositionChange(value: String) { _googleForm.value = _googleForm.value.copy(position = value) }
+    fun onGoogleSalaryChange(value: String) {
+        _googleForm.value = _googleForm.value.copy(salary = value.filter { it.isDigit() })
     }
     // endregion
 
@@ -142,20 +184,45 @@ class AuthViewModel(
     }
 
     /**
-     * Triggers the native Google (Credential Manager) sign-in tray and routes the resolved
-     * identity through the backend. Branches [AuthState.Success] vs [AuthState.MembershipRequired]
-     * on the membership flag, like [submitLogin]. A cancellation / credential error lands on
-     * [AuthState.Error]. [context] must be an Activity context (supplied by the screen).
+     * **Google Phase 1** — triggers the native Credential Manager tray and validates the token.
+     * Branches: an unregistered identity (`registered == false`) yields
+     * [AuthState.GoogleSignUpRequired] (route to the profile form); a registered one branches
+     * [AuthState.Success] vs [AuthState.MembershipRequired] on the membership flag, like
+     * [submitLogin]. A cancellation / credential error lands on [AuthState.Error]. [context] must
+     * be an Activity context (supplied by the screen).
      */
     fun submitSignInWithGoogle(context: Context) {
-        runRequest(
-            onSuccess = { user ->
-                if (user.isMembershipActive()) AuthState.Success(user)
-                else AuthState.MembershipRequired(user)
-            },
-        ) { signInWithGoogleUseCase(context) }
+        runRequest(onSuccess = ::resolveGoogleState) { signInWithGoogleUseCase(context) }
+    }
+
+    /**
+     * **Google Phase 2** — submits the profile-completion form (packed with the stashed
+     * `id_token` inside the store). No-ops until the form is valid. Branches like Phase 1's
+     * registered path.
+     */
+    fun submitGoogleSignUp() {
+        val f: GoogleSignUpForm = _googleForm.value
+        if (!f.isValid) return
+        runRequest(onSuccess = ::resolveGoogleState) {
+            completeGoogleSignUpUseCase(
+                name = f.name,
+                lastName = f.lastName,
+                phoneNumber = f.phoneNumber,
+                dni = f.dni,
+                dateStart = f.dateStart,
+                position = f.position,
+                salary = f.salary.toIntOrNull() ?: 0,
+            )
+        }
     }
     // endregion
+
+    /** Maps a Google auth result to the terminal state: signup-required, or membership branch. */
+    private fun resolveGoogleState(user: User): AuthState = when {
+        user.registered == false -> AuthState.GoogleSignUpRequired
+        user.isMembershipActive() -> AuthState.Success(user)
+        else -> AuthState.MembershipRequired(user)
+    }
 
     /**
      * Runs [block] off the form, projecting the result into [state]. [onSuccess] maps the
@@ -216,6 +283,7 @@ class AuthViewModel(
                     registerUseCase = RegisterUseCase(store),
                     registerWithGoogleUseCase = RegisterWithGoogleUseCase(store),
                     signInWithGoogleUseCase = SignInWithGoogleUseCase(store),
+                    completeGoogleSignUpUseCase = CompleteGoogleSignUpUseCase(store),
                 ) as T
             }
         }

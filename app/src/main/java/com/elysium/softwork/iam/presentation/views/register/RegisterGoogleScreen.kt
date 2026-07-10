@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -36,31 +38,38 @@ import com.elysium.softwork.shared.presentation.theme.AccentDark
 import com.elysium.softwork.shared.presentation.theme.PrimaryNavy
 
 /**
- * Register flow for Google-linked employees. Email + password are not collected here — the
- * Google identity resolves them server-side via the shared `sign-up/employee` endpoint. The
- * worker only chooses a display name. A backend `400` (e.g. the DNI rule) is surfaced under
- * the input through [AuthViewModel.FormState.fieldError].
+ * Google **Phase 2** — profile-completion form for a Google-authenticated worker whose account
+ * does not yet exist (Phase 1 returned `registered == false`). Collects the real profile data the
+ * backend `sign-up/employee/google` endpoint requires; the verified `id_token` is already held in
+ * the store, and email/password/anonymous_name are derived server-side, so none are collected here.
+ *
+ * On success the worker is authenticated (session persisted), so the screen hands control to
+ * [onAuthComplete] for both [AuthState.Success] and [AuthState.MembershipRequired] — the host's
+ * membership gate then decides between the main shell and payment onboarding.
+ *
+ * @param onBack pops back to the login screen (abandons the pending Google sign-up).
+ * @param onAuthComplete invoked once registration completes and a session exists.
  */
 @Composable
 fun RegisterGoogleScreen(
     onBack: () -> Unit,
-    onRegisterSuccess: () -> Unit,
+    onAuthComplete: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AuthViewModel = viewModel(factory = AuthViewModel.Factory),
 ) {
     val state: AuthState by viewModel.state.collectAsStateWithLifecycle()
-    val form: AuthViewModel.FormState by viewModel.form.collectAsStateWithLifecycle()
+    val form: AuthViewModel.GoogleSignUpForm by viewModel.googleForm.collectAsStateWithLifecycle()
 
     LaunchedEffect(state) {
-        if (state is AuthState.Success) {
-            onRegisterSuccess()
-            viewModel.consumeState()
+        when (state) {
+            is AuthState.Success, is AuthState.MembershipRequired -> {
+                onAuthComplete()
+                viewModel.consumeState()
+            }
+            else -> Unit
         }
     }
 
-    // Inset consumption strategy: the union of `systemBars` and `ime` ensures the
-    // `BackTopBar` stays below the status bar and the primary "Sign up" button stays
-    // above whichever is taller — the navigation-bar inset or the software keyboard.
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -82,36 +91,58 @@ fun RegisterGoogleScreen(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = stringResource(R.string.register_google_subtitle),
+                text = stringResource(R.string.google_signup_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
                 color = AccentDark,
             )
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SoftWorkTextField(
-                value = form.username,
-                onValueChange = viewModel::onUsernameChange,
-                label = stringResource(R.string.username_label),
-                isError = form.fieldError != null,
+                value = form.name,
+                onValueChange = viewModel::onGoogleNameChange,
+                label = stringResource(R.string.profile_first_name_label),
             )
-
-            // Backend field-validation message surfaced under the identity input.
-            form.fieldError?.let { fieldError ->
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = fieldError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+            Spacer(Modifier.height(12.dp))
+            SoftWorkTextField(
+                value = form.lastName,
+                onValueChange = viewModel::onGoogleLastNameChange,
+                label = stringResource(R.string.profile_last_name_label),
+            )
+            Spacer(Modifier.height(12.dp))
+            SoftWorkTextField(
+                value = form.phoneNumber,
+                onValueChange = viewModel::onGooglePhoneChange,
+                label = stringResource(R.string.profile_phone_label),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            )
+            Spacer(Modifier.height(12.dp))
+            SoftWorkTextField(
+                value = form.dni,
+                onValueChange = viewModel::onGoogleDniChange,
+                label = stringResource(R.string.profile_dni_label),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
+            Spacer(Modifier.height(12.dp))
+            SoftWorkTextField(
+                value = form.position,
+                onValueChange = viewModel::onGooglePositionChange,
+                label = stringResource(R.string.profile_position_label),
+            )
+            Spacer(Modifier.height(12.dp))
+            SoftWorkTextField(
+                value = form.salary,
+                onValueChange = viewModel::onGoogleSalaryChange,
+                label = stringResource(R.string.profile_salary_label),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
 
             Spacer(Modifier.height(28.dp))
 
             SoftWorkButton(
                 text = stringResource(R.string.create_account),
-                onClick = viewModel::submitRegisterWithGoogle,
-                enabled = state !is AuthState.Loading && form.isUsernameValid,
+                onClick = viewModel::submitGoogleSignUp,
+                enabled = state !is AuthState.Loading && form.isValid,
                 variant = ButtonVariant.EMPLOYEE,
             )
 

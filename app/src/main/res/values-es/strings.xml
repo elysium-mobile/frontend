@@ -21,6 +21,12 @@
     <string name="domain_verified">Dominio verificado</string>
     <string name="role_employee">Empleado</string>
     <string name="register_google_subtitle">Registre su nombre</string>
+    <string name="google_signup_subtitle">Completa tu perfil para terminar de registrarte con Google</string>
+    <string name="profile_first_name_label">Nombre</string>
+    <string name="profile_last_name_label">Apellido</string>
+    <string name="profile_phone_label">Número de teléfono</string>
+    <string name="profile_dni_label">DNI</string>
+    <string name="profile_salary_label">Salario</string>
 
     <!-- Success screen -->
     <string name="user_registered">Usuario registrado</string>

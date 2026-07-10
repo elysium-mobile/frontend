@@ -27,6 +27,13 @@ sealed interface AuthState {
      */
     data class MembershipRequired(val user: User) : AuthState
 
+    /**
+     * Google Phase 1 succeeded but the account does not exist yet (`registered == false`). The
+     * verified `id_token` is held in the store; the screen must route to the Google profile-
+     * completion form, which calls Phase 2. Carries no payload — the token lives in the store.
+     */
+    data object GoogleSignUpRequired : AuthState
+
     /** Last call failed. [message] is a localized, user-facing reason. */
     data class Error(val message: String) : AuthState
 }

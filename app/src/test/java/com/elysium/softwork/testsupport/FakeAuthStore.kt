@@ -37,6 +37,7 @@ open class FakeAuthStore(
     var nextRegisterWithGoogleResult: Result<User> = Result.success(DEFAULT_USER),
     var nextReauthenticateResult: Result<User> = Result.success(DEFAULT_USER),
     var nextSignInWithGoogleResult: Result<User> = Result.success(DEFAULT_USER),
+    var nextCompleteGoogleSignUpResult: Result<User> = Result.success(DEFAULT_USER),
 ) : AuthStore {
 
     /** Number of times each method has been invoked. Useful for "called exactly once" assertions. */
@@ -104,6 +105,22 @@ open class FakeAuthStore(
     override suspend fun signInWithGoogle(context: Context): Result<User> {
         signInWithGoogleInvocations += 1
         return nextSignInWithGoogleResult
+    }
+
+    var completeGoogleSignUpInvocations: Int = 0
+        private set
+
+    override suspend fun completeGoogleSignUp(
+        name: String,
+        lastName: String,
+        phoneNumber: String,
+        dni: String,
+        dateStart: String,
+        position: String,
+        salary: Int,
+    ): Result<User> {
+        completeGoogleSignUpInvocations += 1
+        return nextCompleteGoogleSignUpResult
     }
 
     override suspend fun reauthenticate(): Result<User> {

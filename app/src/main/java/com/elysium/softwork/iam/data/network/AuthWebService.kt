@@ -37,6 +37,26 @@ interface AuthWebService {
     suspend fun signUpEmployee(@Body request: User): Response<User>
 
     /**
+     * **Google Phase 1** — validates the Google `id_token` server-side and reports whether an
+     * account already exists. Send [User.id_token] only. The response fills [User.registered]
+     * (+ [User.id]/[User.email]/[User.token] when `registered == true`); it persists nothing for
+     * new users.
+     */
+    @POST("api/v1/authentication/google")
+    suspend fun googleSignIn(@Body request: User): Response<User>
+
+    /**
+     * **Google Phase 2 (employee)** — completes registration for a Google-authenticated worker.
+     * Send [User.id_token] (re-validated; the trusted email is derived from it) plus the real
+     * profile data ([User.name], [User.last_name], [User.phone_number], [User.dni],
+     * [User.date_start], [User.position], [User.salary]). **No** `email` / `password` /
+     * `anonymous_name` — the backend derives/auto-generates those. The response fills
+     * [User.id]/[User.email]/[User.token].
+     */
+    @POST("api/v1/authentication/sign-up/employee/google")
+    suspend fun googleSignUpEmployee(@Body request: User): Response<User>
+
+    /**
      * Lists every employee profile. Used by the post-login sequential sync to locate the
      * worker's own row by matching [User.user_account_id] against the persisted account id,
      * then extracting [User.employee_profile_id].

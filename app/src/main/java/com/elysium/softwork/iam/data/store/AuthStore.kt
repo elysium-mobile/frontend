@@ -52,16 +52,39 @@ interface AuthStore {
     suspend fun registerWithGoogle(name: String): Result<User>
 
     /**
-     * Triggers the native **Credential Manager** Google sign-in tray, then routes the resolved
-     * identity through the dual-auth backend sequence.
+     * **Google Phase 1** — triggers the native Credential Manager tray, then validates the
+     * resulting `id_token` against `POST /api/v1/authentication/google`.
      *
-     * [context] must be an **Activity** context — Credential Manager needs it to display the
-     * account-picker UI, so it is passed per-call and never retained (the store is a process-wide
-     * singleton). On success the resolved email / display name / id-token are sent to the backend
-     * and the session is persisted as Google-linked. A user cancellation or credential error is
-     * surfaced through the [Result] failure channel for the presentation layer to show.
+     * [context] must be an **Activity** context (Credential Manager needs it to display the
+     * account-picker UI); it is passed per-call and never retained. The returned [User] carries
+     * [User.registered]:
+     *  - `true` → the session (token/account id) is already persisted; route to the home shell.
+     *  - `false` → **no** session yet; the verified `id_token` is stashed in memory and the caller
+     *    must collect the profile fields and call [completeGoogleSignUp] (Phase 2).
+     *
+     * A user cancellation, credential error, or an invalid/expired token (`400`) is surfaced
+     * through the [Result] failure channel.
      */
     suspend fun signInWithGoogle(context: Context): Result<User>
+
+    /**
+     * **Google Phase 2 (employee)** — completes registration for the Google identity validated in
+     * [signInWithGoogle]. Sends the stashed `id_token` plus the profile fields to
+     * `POST /api/v1/authentication/sign-up/employee/google` (no email/password/anonymous_name —
+     * the backend derives them from the token), then persists the returned session.
+     *
+     * Fails if no pending Google `id_token` is held (Phase 1 was not completed with
+     * `registered == false`).
+     */
+    suspend fun completeGoogleSignUp(
+        name: String,
+        lastName: String,
+        phoneNumber: String,
+        dni: String,
+        dateStart: String,
+        position: String,
+        salary: Int,
+    ): Result<User>
 
     /**
      * Re-runs `sign-in` with the credentials persisted at the last successful login to obtain

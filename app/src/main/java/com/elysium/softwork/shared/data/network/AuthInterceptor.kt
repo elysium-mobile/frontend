@@ -125,6 +125,8 @@ class AuthInterceptor(
         private val PUBLIC_ENDPOINT_SUFFIXES: List<String> = listOf(
             "/authentication/sign-in",
             "/authentication/sign-up/employee",
+            "/authentication/sign-up/employee/google",
+            "/authentication/google",
         )
 
         /**

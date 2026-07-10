@@ -40,6 +40,13 @@ class AuthStoreImpl(
     private val gson: Gson,
 ) : AuthStore {
 
+    /**
+     * The Google `id_token` verified in Phase 1 ([signInWithGoogle]) when the account does not yet
+     * exist, held in memory until Phase 2 ([completeGoogleSignUp]) consumes it. Never persisted —
+     * it is short-lived and single-use.
+     */
+    private var pendingGoogleIdToken: String? = null
+
     /** Backing state for [sessionRecovery]. Set by [invalidateSession] on a mid-session 401. */
     private val _sessionRecovery: MutableStateFlow<SessionRecovery> =
         MutableStateFlow(SessionRecovery.NONE)
@@ -110,24 +117,58 @@ class AuthStoreImpl(
         //    Google ID token credential. A cancellation / error throws a GetCredentialException,
         //    caught by runCatching and surfaced as Result.failure for the UiState.
         val response = CredentialManager.create(context).getCredential(context, request)
-        val googleCredential = GoogleIdTokenCredential.createFrom(response.credential.data)
+        val idToken = GoogleIdTokenCredential.createFrom(response.credential.data).idToken
 
-        // 3. Route the resolved identity through the dual-auth backend sequence. The backend has
-        //    no dedicated Google/id-token endpoint, so this reuses `sign-up/employee`, sending the
-        //    real email + display name (uniform snake_case) plus the id_token for forward
-        //    compatibility; the account is resolved by email server-side.
+        // 3. Phase 1: validate the id_token server-side. The backend persists nothing for new
+        //    users — it only reports whether an account already exists.
+        val result = unwrap(webService.googleSignIn(User(id_token = idToken)))
+        if (result.registered == true) {
+            // Registered → an application JWT was issued; persist the session as Google-linked.
+            pendingGoogleIdToken = null
+            persistSessionAndSyncProfile(
+                result,
+                email = result.email.orEmpty(),
+                password = "",
+                googleLinked = true,
+            )
+        } else {
+            // Not registered → stash the verified token in memory for Phase 2; no session yet.
+            pendingGoogleIdToken = idToken
+        }
+        result
+    }
+
+    override suspend fun completeGoogleSignUp(
+        name: String,
+        lastName: String,
+        phoneNumber: String,
+        dni: String,
+        dateStart: String,
+        position: String,
+        salary: Int,
+    ): Result<User> = runCatching {
+        val idToken = pendingGoogleIdToken
+            ?: error("No pending Google sign-in — restart the Google flow")
+        // Phase 2: send the verified id_token + real profile data. No email/password/anonymous_name
+        // — the backend derives the email from the token and auto-generates the rest.
         val user = unwrap(
-            webService.signUpEmployee(
+            webService.googleSignUpEmployee(
                 User(
-                    email = googleCredential.id,
-                    name = googleCredential.displayName,
-                    id_token = googleCredential.idToken,
+                    id_token = idToken,
+                    name = name.trim(),
+                    last_name = lastName.trim(),
+                    phone_number = phoneNumber.trim(),
+                    dni = dni.trim(),
+                    date_start = dateStart.trim(),
+                    position = position.trim(),
+                    salary = salary,
                 ),
             ),
         )
+        pendingGoogleIdToken = null
         persistSessionAndSyncProfile(
             user,
-            email = googleCredential.id,
+            email = user.email.orEmpty(),
             password = "",
             googleLinked = true,
         )

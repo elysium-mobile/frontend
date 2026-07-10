@@ -79,6 +79,9 @@ data class User(
 
     // --- Native Google (Credential Manager) identity handshake ---
     val id_token: String? = null,
+
+    // --- Google Phase-1 handshake response (`POST /authentication/google`) ---
+    val registered: Boolean? = null,
 ) {
 
     /**

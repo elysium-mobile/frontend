@@ -3,6 +3,7 @@ package com.elysium.softwork.iam.presentation.viewmodel
 import com.elysium.softwork.iam.application.AuthState
 import com.elysium.softwork.iam.application.usecase.LoginUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterUseCase
+import com.elysium.softwork.iam.application.usecase.CompleteGoogleSignUpUseCase
 import com.elysium.softwork.iam.application.usecase.RegisterWithGoogleUseCase
 import com.elysium.softwork.iam.application.usecase.SignInWithGoogleUseCase
 import com.elysium.softwork.iam.domain.model.User
@@ -55,6 +56,7 @@ class AuthViewModelTest {
             registerUseCase = RegisterUseCase(store),
             registerWithGoogleUseCase = RegisterWithGoogleUseCase(store),
             signInWithGoogleUseCase = SignInWithGoogleUseCase(store),
+            completeGoogleSignUpUseCase = CompleteGoogleSignUpUseCase(store),
         )
 
     // region Form state

@@ -1054,12 +1054,14 @@ server-side, so the device sends only the display name).
     reads it *before* the wipe to pick `GOOGLE` vs `CREDENTIALS` (a Google-linked account stores
     no local password, so it can only recover through the Gmail handshake).
   - [`MainActivity`](app/src/main/java/com/elysium/softwork/MainActivity.kt) collects the signal
-    with `collectAsStateWithLifecycle` and, in a `LaunchedEffect`, latches a `rememberSaveable`
-    `googleReauth` bit, flips `isAuthenticated = false`, then consumes the signal — the router
-    hot-swaps to `AuthNavHost` (no `popUpTo`) with `startDestination = REGISTER_GOOGLE` for a
-    Google session, else `LOGIN`. A deliberate logout resets `googleReauth`.
+    with `collectAsStateWithLifecycle` and, in a `LaunchedEffect`, flips `isAuthenticated = false`
+    then consumes the signal — the router hot-swaps to `AuthNavHost` (no `popUpTo`), always on the
+    `LoginScreen`. (The earlier `googleReauth` start-destination latch was removed with the
+    two-phase Google migration: a Google session recovers by re-tapping "Continue with Google" on
+    the login screen, so `SessionRecovery.GOOGLE` no longer changes the route — the discriminator
+    is retained but currently routes identically to `CREDENTIALS`.)
   - [`AuthNavHost`](app/src/main/java/com/elysium/softwork/iam/presentation/navigation/AuthNavigation.kt)
-    gained a `startDestination` parameter (defaults to `AuthRoutes.LOGIN`).
+    retains a `startDestination` parameter (defaults to `AuthRoutes.LOGIN`), no longer overridden.
   - `FakeAuthStore` (with a programmable `nextInvalidationRecovery`) + the `AuthStore` contract
     updated in lockstep.
 - **Membership validation via the `user_accounts` FK — catalog vs. enrolment contract split.**
@@ -1101,23 +1103,40 @@ server-side, so the device sends only the display name).
     call `CredentialManager.create(context).getCredential(context, request)`, and parse the
     `GoogleIdTokenCredential` (email `.id`, `.displayName`, `.idToken`). The **Activity** context
     is passed per-call (never retained — the store is a singleton).
-  - `SignInWithGoogleUseCase` → `AuthViewModel.submitSignInWithGoogle(context)` (branches
-    `Success` vs `MembershipRequired` like login); `LoginScreen` unwraps `LocalContext.current`
-    to its host `Activity` via a `findActivity()` chain walk (the tray is a window and must be
-    anchored to the real Activity, not a themed `ContextWrapper`) before invoking the button. A
-    cancellation / `GetCredentialException` is caught by the store's `runCatching` and surfaced on
-    `AuthState.Error`.
-  - **Backend gap (flagged):** the API exposes **no** Google/id-token endpoint (auth is only
-    `sign-in` + `sign-up/employee`; the only backend "Google" is Gemini). So the resolved identity
-    is routed through the existing `sign-up/employee` dual-auth path, sending the real `email` +
-    `name` + a new snake_case `User.id_token` (forward-compat; the backend ignores unknown keys).
-    Until a real Google endpoint exists, this 400s on the other `@NotBlank` sign-up fields
-    (`dni`/…), surfaced inline — same limitation as the existing minimal registration.
+  - `SignInWithGoogleUseCase` → `AuthViewModel.submitSignInWithGoogle(context)`; `LoginScreen`
+    unwraps `LocalContext.current` to its host `Activity` via a `findActivity()` chain walk (the
+    tray is a window and must be anchored to the real Activity, not a themed `ContextWrapper`)
+    before invoking the button. A cancellation / `GetCredentialException` is caught by the store's
+    `runCatching` and surfaced on `AuthState.Error`.
+  - **Two-phase backend flow (`GoogleIdTokenVerifier`).** The backend deployed a real Google flow
+    (doc §2), so the client no longer routes through `sign-up/employee`:
+    - **Phase 1** — `signInWithGoogle` extracts the `id_token` and POSTs it to
+      `POST /api/v1/authentication/google` (`User(id_token=…)`). The `GoogleAuthenticationResponse`
+      is parsed into `User` (added nullable `registered`). `registered == true` → persist the
+      returned session (Google-linked) → `AuthState.Success`/`MembershipRequired`. `registered ==
+      false` → stash the verified `id_token` in an in-memory `pendingGoogleIdToken` field (never
+      persisted) → `AuthState.GoogleSignUpRequired`.
+    - **Phase 2** — `AuthState.GoogleSignUpRequired` routes `LoginScreen` → `onGoogleSignUpRequired`
+      → the repurposed `RegisterGoogleScreen` (now a 7-field profile form: name/last_name/
+      phone_number/dni/date_start/position/salary, backed by `AuthViewModel.GoogleSignUpForm`).
+      Submit → `CompleteGoogleSignUpUseCase` → `AuthStore.completeGoogleSignUp(...)` →
+      `POST /api/v1/authentication/sign-up/employee/google` packing the stashed `id_token` + form
+      fields in snake_case. **No** `email`/`password`/`anonymous_name` (derived server-side). On
+      success the session persists and the host membership gate takes over (`onAuthComplete`).
+    - Both `/authentication/google` and `/authentication/sign-up/employee/google` are public
+      (added to `AuthInterceptor.PUBLIC_ENDPOINT_SUFFIXES`).
+    - The Phase-9 `googleReauth` start-destination latch in `MainActivity` was **removed**: a
+      Google session recovery now returns to `LoginScreen` (re-tap "Continue with Google" → Phase 1),
+      so `SessionRecovery.GOOGLE` vs `CREDENTIALS` no longer changes the route.
+    - **Superseded (dead, retained for tests):** the legacy single-phase
+      `AuthStore.registerWithGoogle(name)` / `RegisterWithGoogleUseCase` /
+      `AuthViewModel.submitRegisterWithGoogle` and the earlier `User.id_token`→`sign-up/employee`
+      routing. Prunable once `AuthViewModelTest`'s `registerWithGoogle` coverage is migrated.
   - **New dependencies** (rationale): `androidx.credentials:credentials` +
     `:credentials-play-services-auth` and `com.google.android.libraries.identity.googleid:googleid`
     — the native Gmail identity handshake (the sole external identity path the client may touch).
     `LoginScreen` dropped its now-unused `onNavigateToRegisterWithGoogle` param; `FakeAuthStore` /
-    `AuthViewModelTest` updated for the new use case.
+    `AuthViewModelTest` updated for the new use cases.
 
 ### ✅ Phase 10 — Feedback backend integration against the live Spring Boot API
 

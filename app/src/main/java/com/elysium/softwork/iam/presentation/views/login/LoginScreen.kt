@@ -61,6 +61,8 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * @param onMembershipRequired invoked when authentication succeeds but the membership is not
  *   active — the host routes straight into the payment onboarding gate.
  * @param onNavigateToRegister opens the standard register flow.
+ * @param onGoogleSignUpRequired opens the Google profile-completion form (Phase 1 returned
+ *   `registered == false`; the verified token is held in the store for Phase 2).
  * @param onForgotPassword opens the forgot-password flow (currently a no-op placeholder).
  */
 @Composable
@@ -68,6 +70,7 @@ fun LoginScreen(
     onLoginSuccess: () -> Unit,
     onMembershipRequired: () -> Unit,
     onNavigateToRegister: () -> Unit,
+    onGoogleSignUpRequired: () -> Unit,
     onForgotPassword: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AuthViewModel = viewModel(factory = AuthViewModel.Factory),
@@ -88,6 +91,10 @@ fun LoginScreen(
             }
             is AuthState.MembershipRequired -> {
                 onMembershipRequired()
+                viewModel.consumeState()
+            }
+            is AuthState.GoogleSignUpRequired -> {
+                onGoogleSignUpRequired()
                 viewModel.consumeState()
             }
             else -> Unit

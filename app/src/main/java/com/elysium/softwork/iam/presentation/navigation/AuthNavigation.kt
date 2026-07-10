@@ -72,8 +72,10 @@ fun AuthNavHost(
                 // host, which mounts the payment onboarding gate when no active membership.
                 onMembershipRequired = onAuthComplete,
                 onNavigateToRegister = { navController.navigate(AuthRoutes.REGISTER) },
-                // "Continue with Google" now triggers the native Credential Manager tray inside
-                // LoginScreen (via the ViewModel), so it no longer navigates to a separate screen.
+                // "Continue with Google" triggers the native Credential Manager tray (Phase 1)
+                // inside LoginScreen. When the account is new (`registered == false`), it routes
+                // here to the Google profile-completion form (Phase 2).
+                onGoogleSignUpRequired = { navController.navigate(AuthRoutes.REGISTER_GOOGLE) },
                 onForgotPassword = { /* Forgot-password flow is not yet implemented. */ },
             )
         }
@@ -104,11 +106,9 @@ fun AuthNavHost(
         ) {
             RegisterGoogleScreen(
                 onBack = { navController.popBackStack() },
-                onRegisterSuccess = {
-                    navController.navigate(AuthRoutes.success(SuccessKind.REGISTER)) {
-                        popUpTo(AuthRoutes.LOGIN)
-                    }
-                },
+                // Phase 2 completion authenticates the worker; hand control to the host so the
+                // membership gate routes into the main shell or payment onboarding.
+                onAuthComplete = onAuthComplete,
             )
         }
 
