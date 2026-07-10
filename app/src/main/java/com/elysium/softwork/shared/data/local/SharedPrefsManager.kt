@@ -51,6 +51,7 @@ class SharedPrefsManager(context: Context) {
             remove(KEY_USER_PASSWORD)
             remove(KEY_GOOGLE_SESSION)
             remove(KEY_MEMBERSHIP_ID)
+            remove(KEY_COMPANY_ID)
         }
     }
 
@@ -106,6 +107,15 @@ class SharedPrefsManager(context: Context) {
          * [clearSession].
          */
         const val KEY_MEMBERSHIP_ID: String = "membership_id"
+
+        /**
+         * Storage key for the backend `company_id` — the owning company exposed on the worker's
+         * `user_accounts` record. Resolved by the post-login sequential call to
+         * `GET /api/v1/user_accounts` (matched by `user_account_id`) alongside [KEY_MEMBERSHIP_ID].
+         * Sent as the organizational-grouping context on Employee Assistant requests
+         * (`POST /api/v1/employee-assistant`). Part of the IAM session — cleared by [clearSession].
+         */
+        const val KEY_COMPANY_ID: String = "company_id"
 
         /** Storage key for the worker's email — retained for programmatic re-authentication. */
         const val KEY_USER_EMAIL: String = "user_email"

@@ -827,6 +827,13 @@ hook.
 
 ### ✅ Phase 8 (in progress) — Feedback / FlowWork AI chat
 
+> **⚠️ Data layer superseded by Phase 15 (Employee Assistant backend integration).** The
+> five-template hash mock is gone: `FeedbackStoreImpl` is now Retrofit-backed against the live
+> `POST /api/v1/feedback-assistant` (Gemini) endpoint. The `FeedbackStore` contract, the
+> `AiChatViewModel`, and every screen/use case below are **unchanged** — only the store body and
+> its constructor changed. See the Phase 15 section below. The historical mock notes are retained
+> for context.
+
 - **Domain**: [`ChatMessage`](app/src/main/java/com/elysium/softwork/feedback/domain/model/ChatMessage.kt)
   data class (`id` / `content` / `isFromUser` / `timestamp`) annotated with
   `@SerializedName` per the bean shortcut. Drives bubble alignment and color in the
@@ -865,17 +872,23 @@ hook.
     gradients survive), a single-to-four-line `BasicTextField` with an IME
     `Send` action wired to the send handler, and a circular send button that
     flips between `PrimarySky` (enabled) and `AccentMint` (disabled). The Row
-    chains `imePadding()` then `navigationBarsPadding()` so the composer floats
-    above the keyboard when open and above the gesture pill / button bar when
-    closed.
+    applies a **single** `windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))`
+    — the union (max per side), not a sum — so the composer floats above the
+    keyboard when open and above the gesture pill / button bar when closed without
+    the extra nav-bar-height gap that stacking `imePadding()` + `navigationBarsPadding()`
+    would leave while the keyboard is up. **Requires** `MainActivity` to declare
+    `android:windowSoftInputMode="adjustResize"` in the manifest: under
+    `enableEdgeToEdge()` this is what makes the platform dispatch/animate the IME
+    inset instead of **panning** the window (panning clipped the top of the
+    conversation and double-shifted the composer to mid-screen — the original bug).
 - **Navigation**: `FeedbackRoutes.AI_CHAT = "feedback/ai_chat"` and a `composable`
   registered inside `feedbackGraph` (push/pop transitions reuse the shared
   `PushEnter / PushExit / PushPopEnter / PushPopExit` set). `MainNavHost` now
   observes the current back-stack entry and suppresses `SoftWorkBottomBar` whenever
   the active route is in the `ImmersiveRoutes` set (currently
   `FeedbackRoutes.AI_CHAT`), so the chat surface owns the full vertical viewport
-  and the composer's `navigationBarsPadding()` does not stack on the bottom bar's
-  own inset consumption. `HomeScreen`'s "AI Assistant" action card
+  and the composer's inset padding does not stack on the bottom bar's own inset
+  consumption. `HomeScreen`'s "AI Assistant" action card
   (`onOpenAssistant`) now navigates to the chat route.
 - **Wiring**: `ServiceLocator` exposes
   `val feedbackStore: FeedbackStore by lazy { FeedbackStoreImpl() }`. No
@@ -1457,6 +1470,58 @@ consistency — candidate for deletion since no stand-alone token endpoint exist
 non-wire exclusions (unchanged): `ChatMessage.isFromUser` (AI-chat mock, in-memory), `PaymentMethod`
 `holderName`/`expiryMonthYear` (client-side saved card, no backend resource), and the `/assets`
 multipart `@Part` form-field names `messageId`/`name`/`fileType`/`file` (bypass Jackson JSON naming).
+
+### ✅ Phase 15 — Employee Assistant (AI) backend integration against the live Spring Boot API
+
+The `feedback` AI-chat sub-context transitioned off the Phase-8 five-template hash mock onto the
+live Gemini-backed Employee Assistant endpoint. **Blast radius is one store + two new files** — the
+`FeedbackStore` contract, `AiChatViewModel`, `SendChatMessageUseCase`/`ObserveConversationUseCase`,
+and `AiChatScreen` are all unchanged.
+
+- **Route.** The deployed contract exposes the endpoint at `POST /api/v1/employee-assistant`
+  (employee-facing; the RRHH counterpart is `/api/v1/dashboard-assistant`). ⚠️ This supersedes the
+  `/feedback-assistant` path in `ELYSIUM-API_DOCUMENTATION.md` §5.5 — that doc entry is now **stale**
+  and should be refreshed to match the deployment. (An interim build briefly targeted the doc's
+  `/feedback-assistant`; the route was switched to `/employee-assistant` per the deployed contract.)
+- **Domain (`feedback/domain/model/AssistantMessage`)** — one annotation-free snake_case bean spanning
+  both wire shapes (Bean shortcut, all fields nullable): request fills `prompt` (required server-side)
+  + optional `company_id` (organizational grouping identifier — **replaced the deprecated `survey_id`**
+  in the deployed payload); response fills `content_answer` (Gemini's reply, always Spanish per the
+  backend system prompt). No Jackson `@JsonNaming` on the Kotlin side (backend-only) — the field name
+  is already snake_case, resolved by Gson reflection.
+- **Network (`feedback/data/network/FeedbackAssistantWebService`)** — `@POST("api/v1/employee-assistant")
+  suspend fun askAssistant(@Body request: AssistantMessage): Response<AssistantMessage>`. Authenticated
+  (JWT) JSON POST — **not** on `AuthInterceptor`'s public allowlist, so bearer + `Accept` +
+  `Content-Type: application/json` are attached automatically and a mid-session `401` correctly routes
+  through the session-invalidation trap (no interceptor change was needed).
+- **Store (`feedback/data/store/FeedbackStoreImpl`)** — mock (`RESPONSE_TEMPLATES`, `generateAiReply`,
+  the 1.2 s `delay`) deleted; now `FeedbackStoreImpl(webService, gson, companyIdProvider)`. The
+  conversation log **stays** an in-memory `MutableStateFlow<List<ChatMessage>>` (the backend assistant
+  is stateless per-request — it keeps no server-side history), so `send(content)` appends the worker's
+  bubble optimistically, POSTs `AssistantMessage(company_id = companyIdProvider(), prompt = …)`, and
+  appends the returned `content_answer` as the AI bubble. A `400` parses into `BadRequestException` via
+  the shared `unwrap`/`throwTyped` pattern (e.g. the `"Prompt must not be empty."` rule) and surfaces
+  through the failed `Result`; the optimistic worker bubble is left intact.
+- **`company_id` provenance.** The request's `company_id` is the signed-in worker's owning company,
+  sourced from `SharedPrefsManager.KEY_COMPANY_ID`. That key is populated during the Phase-9 post-login
+  `user_accounts` sync: `AuthStoreImpl.syncUserAccount` now caches **both** `membership_id` **and**
+  `company_id` from the matched `user_accounts` row (each persisted independently, best-effort), and
+  `clearSession()` drops `KEY_COMPANY_ID` with the rest of the IAM session. The provider reads it live
+  per send (`getLong` + `takeIf { it != DEFAULT_LONG }`), mirroring `validateMembershipUseCase`'s
+  `membership_id` seam; `null` ⇒ unscoped request (Gson drops the key).
+- **Wiring**: `ServiceLocator` now owns `feedbackAssistantWebService` and builds
+  `FeedbackStoreImpl(feedbackAssistantWebService, gson, companyIdProvider = { …KEY_COMPANY_ID })`.
+
+#### Phase 15 caveats
+
+- **Conversation history is still in-memory only.** Cold start wipes the log; the endpoint carries no
+  history. Persist through Room or a history endpoint if multi-session continuity is needed later.
+- **`company_id` is auto-scoped from the session, not the UI.** Every assistant request carries the
+  worker's cached `company_id` transparently; the worker never selects it. Requests made before the
+  post-login `user_accounts` sync has populated `KEY_COMPANY_ID` (or when the backend omits it) go out
+  unscoped (`null`, dropped by Gson) rather than failing.
+- **`FeedbackStore.send` KDoc still says "≈1.2 s mocked round-trip".** Stale wording — the round-trip
+  is now a real network call; prune in a follow-up.
 
 ### 🔜 Next — Phase (IMPLEMENTATION WITH REAL BACKEND API)
 

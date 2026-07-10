@@ -13,11 +13,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -323,11 +324,17 @@ private fun TypingIndicator() {
  * Bottom-pinned composer.
  *
  * Window-inset contract:
- *  - `Modifier.imePadding()` lifts the composer above the software keyboard whenever the
- *    IME is visible. The padding resolves to zero when the keyboard is hidden.
- *  - `Modifier.navigationBarsPadding()` reserves the system navigation-bar inset so the
- *    composer never overlaps the gesture pill or button bar on devices where the
- *    persistent app navigation bar has been hidden for this route.
+ *  - A single `windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))`
+ *    lifts the composer above whichever inset is larger on each side. Keyboard hidden → the
+ *    nav-bar inset keeps the composer clear of the gesture pill / button bar; keyboard
+ *    visible → the IME inset (which already spans the nav-bar region) sits the composer flush
+ *    above the keyboard. The union (max per side) is used deliberately instead of stacking
+ *    `imePadding()` + `navigationBarsPadding()`, which would sum the two and leave an extra
+ *    nav-bar-height gap while the keyboard is open.
+ *  - Depends on the Activity declaring `windowSoftInputMode="adjustResize"` (see the manifest)
+ *    so, under `enableEdgeToEdge()`, the IME inset is dispatched and animated rather than the
+ *    window being panned (panning clips the top of the conversation and double-shifts the
+ *    composer).
  *
  * Visual contract: a rounded white surface holding a leading brand-mark image (the
  * adaptive launcher foreground, drawn via `Image` to preserve native colors), a
@@ -350,8 +357,14 @@ private fun ChatInputBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(AccentWhite)
-            .imePadding()
-            .navigationBarsPadding()
+            // Single inset source: the union takes the max per side of the IME and the
+            // navigation-bar insets rather than summing them. Keyboard hidden → resolves to
+            // the nav-bar height (composer clears the gesture pill); keyboard visible → resolves
+            // to the IME height, which already spans the nav-bar region, so the composer sits
+            // flush above the keyboard with no extra gap. Requires the Activity's
+            // `windowSoftInputMode=adjustResize` (declared in the manifest) so the IME inset is
+            // dispatched/animated under edge-to-edge instead of the window being panned.
+            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

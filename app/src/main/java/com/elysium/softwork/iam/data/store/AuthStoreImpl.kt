@@ -290,23 +290,25 @@ class AuthStoreImpl(
     }
 
     /**
-     * Resolves and persists the worker's `membership_id` foreign key.
+     * Resolves and persists the worker's `membership_id` and `company_id` foreign keys.
      *
      * `GET /api/v1/user_accounts` returns every account, so the worker's row is found by
-     * matching [User.user_account_id] against [accountId]; its [User.membership_id] is then
-     * cached so the session-authorization gate can query `GET /api/v1/memberships/{id}`.
-     * Best-effort: any failure is swallowed — a missing membership id simply leaves the gate
-     * to treat the worker as not-active (routing them to payment onboarding).
+     * matching [User.user_account_id] against [accountId]. Its [User.membership_id] is cached so
+     * the session-authorization gate can query `GET /api/v1/memberships/{id}`, and its
+     * [User.company_id] is cached as the organizational-grouping context for Employee Assistant
+     * requests. Best-effort: any failure is swallowed, and each id is persisted independently — a
+     * missing `membership_id` simply leaves the gate to treat the worker as not-active (routing
+     * them to payment onboarding), while a missing `company_id` leaves assistant calls unscoped.
      */
     private suspend fun syncUserAccount(accountId: Long) {
         runCatching {
             val response = webService.getUserAccounts()
             if (!response.isSuccessful) return
-            val membershipId = response.body()
+            val account: User = response.body()
                 ?.firstOrNull { it.user_account_id == accountId }
-                ?.membership_id
                 ?: return
-            prefs.putLong(SharedPrefsManager.KEY_MEMBERSHIP_ID, membershipId)
+            account.membership_id?.let { prefs.putLong(SharedPrefsManager.KEY_MEMBERSHIP_ID, it) }
+            account.company_id?.let { prefs.putLong(SharedPrefsManager.KEY_COMPANY_ID, it) }
         }
     }
 

@@ -15,6 +15,7 @@ import com.elysium.softwork.worker.forum.data.store.ForumReportStoreImpl
 import com.elysium.softwork.worker.forum.domain.ForumReportStore
 import com.elysium.softwork.feedback.data.store.FeedbackStore
 import com.elysium.softwork.feedback.data.store.FeedbackStoreImpl
+import com.elysium.softwork.feedback.data.network.FeedbackAssistantWebService
 import com.elysium.softwork.feedback.data.network.SurveyWebService
 import com.elysium.softwork.feedback.data.store.SurveyStore
 import com.elysium.softwork.feedback.data.store.SurveyStoreImpl
@@ -94,7 +95,21 @@ class ServiceLocator(context: Context) {
 
     val surveyStore: SurveyStore by lazy { SurveyStoreImpl(surveyWebService, gson) }
 
-    val feedbackStore: FeedbackStore by lazy { FeedbackStoreImpl() }
+    private val feedbackAssistantWebService: FeedbackAssistantWebService by lazy {
+        ApiClient.retrofit.create(FeedbackAssistantWebService::class.java)
+    }
+
+    val feedbackStore: FeedbackStore by lazy {
+        FeedbackStoreImpl(
+            webService = feedbackAssistantWebService,
+            gson = gson,
+            companyIdProvider = {
+                sharedPrefsManager
+                    .getLong(SharedPrefsManager.KEY_COMPANY_ID)
+                    .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+            },
+        )
+    }
 
     private val notificationWebService: NotificationWebService by lazy {
         ApiClient.retrofit.create(NotificationWebService::class.java)
