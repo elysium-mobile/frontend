@@ -44,6 +44,18 @@ class ForumStoreImpl(
 
     override suspend fun getThread(threadId: Long): Thread? = threadDao.getById(threadId)
 
+    override suspend fun refreshThread(threadId: Long): Result<Thread> = runCatching {
+        val thread = unwrap(webService.getThread(threadId))
+        threadDao.upsert(thread)
+        // The detail route nests the latest replies; cache them so observeMessages(threadId)
+        // re-emits. Backfill thread_id defensively so the DAO's per-thread filter always matches.
+        thread.message_responses
+            ?.map { if (it.thread_id == null) it.copy(thread_id = threadId) else it }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { messageDao.upsertAll(it) }
+        thread
+    }
+
     override fun observeMessages(threadId: Long): Flow<List<Message>> =
         messageDao.observeForThread(threadId)
 

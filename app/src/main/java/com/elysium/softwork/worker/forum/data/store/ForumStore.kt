@@ -23,6 +23,15 @@ interface ForumStore {
     /** One-shot cached lookup of a single thread by id. */
     suspend fun getThread(threadId: Long): Thread?
 
+    /**
+     * Pull-to-refresh entry point for the thread-detail screen. Fetches
+     * `GET /api/v1/threads/{id}` (whose `ThreadResponse` nests the latest replies under
+     * `message_responses`), upserts the thread header **and** the nested messages into the cache
+     * so [observeMessages] re-emits, and returns the refreshed [Thread]. A `400` surfaces as a
+     * [com.elysium.softwork.shared.data.network.BadRequestException].
+     */
+    suspend fun refreshThread(threadId: Long): Result<Thread>
+
     /** Live message stream for [threadId] from the local cache. */
     fun observeMessages(threadId: Long): Flow<List<Message>>
 

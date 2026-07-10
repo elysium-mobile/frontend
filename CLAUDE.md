@@ -1333,6 +1333,23 @@ mocks (`SeedPosts`, `SampleReports`, the report `delay`) are deleted.
   the report status pills are gone (the backend provides no equivalent). `ForumCategory` /
   `ReportStatus` / the `CategoryChips` composable are now unused (prunable).
 
+#### Phase 12 addendum — thread-detail pull-to-refresh
+
+`ThreadScreen` wraps its message `LazyColumn` in a Material 3 `PullToRefreshBox`
+(`@OptIn(ExperimentalMaterial3Api::class)` on the screen composable — the smallest declaration
+touching the experimental surface, per the granular opt-in rule). A pull-down calls
+`ThreadViewModel.refresh()`, gated by `isRefreshing: StateFlow<Boolean>` (flag dropped in a
+`finally` so the wheel always retracts). The refresh path is distinct from the entry-time
+`refreshMessages` (which hits `GET /messages` filtered): it goes through a new
+`refreshThread(threadId)` on `ForumStore` → `GetThread` route `GET /api/v1/threads/{id}`, whose
+`ThreadResponse` **nests** the latest replies under `message_responses`. `ForumStoreImpl.refreshThread`
+upserts the header **and** those nested messages (backfilling `thread_id` defensively) so the
+observed `observeMessages(threadId)` stream re-emits — one round-trip refreshes both header and
+replies. Wiring: new `RefreshThreadUseCase`; `Thread` gained an `@Ignore`-d `message_responses:
+List<Message>?` body property (mirrors `Message.attachments` — no Room column, **no schema/version
+bump**; Gson populates it by reflection). `FakeForumStore` gained `refreshThread` +
+`nextRefreshThreadResult` / `refreshThreadInvocations`.
+
 ### ✅ Phase 13 — Payment / Membership backend integration against the live Spring Boot API
 
 The `payment.membership` context now talks to the real payment-service API. The mock

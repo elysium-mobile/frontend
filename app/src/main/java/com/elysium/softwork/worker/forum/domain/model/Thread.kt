@@ -1,6 +1,7 @@
 package com.elysium.softwork.worker.forum.domain.model
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.PrimaryKey
 
 /**
@@ -22,6 +23,11 @@ import androidx.room.PrimaryKey
  * @property last_message last-activity date (request + response).
  * @property category_id owning category (request + response).
  * @property message_count reply count (request + response).
+ * @property message_responses response-only nested reply list returned by the thread-detail
+ *   route (`GET /api/v1/threads/{id}` → `ThreadResponse`). `@Ignore`-d from Room (a
+ *   `List<Message>` has no column type without a converter, and replies are persisted in the
+ *   separate `messages` table); Gson still populates it from the `message_responses` wire key so
+ *   a thread refresh can upsert the nested replies into the message cache in one round-trip.
  */
 @Entity(tableName = "threads")
 data class Thread(
@@ -32,4 +38,7 @@ data class Thread(
     val last_message: String? = null,
     val category_id: Long? = null,
     val message_count: Int? = null,
-)
+) {
+    @Ignore
+    var message_responses: List<Message>? = null
+}

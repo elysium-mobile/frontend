@@ -11,6 +11,7 @@ import com.elysium.softwork.worker.forum.application.usecase.GetThreadUseCase
 import com.elysium.softwork.worker.forum.application.usecase.ObserveThreadMessagesUseCase
 import com.elysium.softwork.worker.forum.application.usecase.PostMessageUseCase
 import com.elysium.softwork.worker.forum.application.usecase.RefreshThreadMessagesUseCase
+import com.elysium.softwork.worker.forum.application.usecase.RefreshThreadUseCase
 import com.elysium.softwork.worker.forum.domain.model.Message
 import com.elysium.softwork.worker.forum.domain.model.Thread
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
  * @param getThread resolves a thread by id from the local cache.
  * @param observeMessages streams the cached messages for the thread.
  * @param refreshMessages pulls the thread's messages from the network.
+ * @param refreshThread pull-to-refresh: re-fetches the thread detail (header + nested replies).
  * @param postMessage posts a reply (binds the author id from prefs).
  * @param getForumAnonymity reads the persisted forum-anonymity flag for the input avatar.
  */
@@ -36,6 +38,7 @@ class ThreadViewModel(
     private val getThread: GetThreadUseCase,
     private val observeMessages: ObserveThreadMessagesUseCase,
     private val refreshMessages: RefreshThreadMessagesUseCase,
+    private val refreshThread: RefreshThreadUseCase,
     private val postMessage: PostMessageUseCase,
     getForumAnonymity: GetForumAnonymityUseCase,
 ) : ViewModel() {
@@ -48,6 +51,15 @@ class ThreadViewModel(
 
     private val _errorMessage: MutableStateFlow<String?> = MutableStateFlow(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _isRefreshing: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    /**
+     * `true` while a pull-to-refresh round-trip is in flight. Bound to the
+     * `PullToRefreshBox` indicator; flips back to `false` in a `finally` so the wheel always
+     * retracts, even on a transport failure.
+     */
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     /** Resolved once on construction — re-enter the screen to pick up a privacy change. */
     val isAnonymous: Boolean = getForumAnonymity()
@@ -63,6 +75,26 @@ class ThreadViewModel(
         }
         viewModelScope.launch {
             observeMessages(threadId).collect { list -> _messages.value = list }
+        }
+    }
+
+    /**
+     * Pull-to-refresh handler for the thread screen. Re-fetches `GET /api/v1/threads/{id}`,
+     * updating the header from the returned [Thread] while the nested replies flow back into
+     * [messages] via the observed cache stream. No-ops until a thread has been loaded; the
+     * indicator flag drops in `finally` so the wheel always retracts.
+     */
+    fun refresh() {
+        if (currentThreadId == 0L || _isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                refreshThread(currentThreadId)
+                    .onSuccess { _thread.value = it }
+                    .onFailure { _errorMessage.value = resolveError(it) }
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 
@@ -98,6 +130,7 @@ class ThreadViewModel(
                     getThread = GetThreadUseCase(store),
                     observeMessages = ObserveThreadMessagesUseCase(store),
                     refreshMessages = RefreshThreadMessagesUseCase(store),
+                    refreshThread = RefreshThreadUseCase(store),
                     postMessage = PostMessageUseCase(store, locator.sharedPrefsManager),
                     getForumAnonymity = GetForumAnonymityUseCase(locator.sharedPrefsManager),
                 ) as T

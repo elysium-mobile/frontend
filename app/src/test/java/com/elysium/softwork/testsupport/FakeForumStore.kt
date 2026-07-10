@@ -30,8 +30,15 @@ open class FakeForumStore(initialThreads: List<Thread> = emptyList()) : ForumSto
     /** Result returned by the next [refreshThreads] call. Defaults to success. */
     var nextRefreshThreadsResult: Result<Unit> = Result.success(Unit)
 
+    /** Tally of [refreshThread] (pull-to-refresh) invocations. */
+    var refreshThreadInvocations: Int = 0
+        private set
+
     /** Result returned by the next [createThread] call. Defaults to a stub thread. */
     var nextCreateThreadResult: Result<Thread> = Result.success(Thread(thread_id = 1L))
+
+    /** Result returned by the next [refreshThread] call. Defaults to a stub thread. */
+    var nextRefreshThreadResult: Result<Thread> = Result.success(Thread(thread_id = 1L))
 
     /** Result returned by the next [postMessage] call. Defaults to a stub message. */
     var nextPostMessageResult: Result<Message> = Result.success(Message(message_id = 1L))
@@ -45,6 +52,11 @@ open class FakeForumStore(initialThreads: List<Thread> = emptyList()) : ForumSto
 
     override suspend fun getThread(threadId: Long): Thread? =
         _threads.value.firstOrNull { it.thread_id == threadId }
+
+    override suspend fun refreshThread(threadId: Long): Result<Thread> {
+        refreshThreadInvocations += 1
+        return nextRefreshThreadResult
+    }
 
     override fun observeMessages(threadId: Long): Flow<List<Message>> = _messages
 

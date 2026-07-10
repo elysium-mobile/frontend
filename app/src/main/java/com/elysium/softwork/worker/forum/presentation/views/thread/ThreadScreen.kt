@@ -18,10 +18,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,9 +59,14 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * the offline-first cache; the bottom sticky input posts a real reply (the author id is bound
  * from prefs by the use case). A backend `400` surfaces inline.
  *
+ * The message list is wrapped in a Material 3 [PullToRefreshBox]: a pull-down gesture calls
+ * [ThreadViewModel.refresh], which re-fetches `GET /api/v1/threads/{id}` (header + nested
+ * replies) and drives the top loading indicator through the `isRefreshing` flag.
+ *
  * @param threadId backend `thread_id` of the open thread.
  * @param onReport navigates to the report screen for the current thread.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadScreen(
     threadId: Long,
@@ -72,6 +79,7 @@ fun ThreadScreen(
     val thread: Thread? by viewModel.thread.collectAsStateWithLifecycle()
     val messages: List<Message> by viewModel.messages.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val isRefreshing: Boolean by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     LaunchedEffect(threadId) {
         viewModel.load(threadId)
@@ -91,32 +99,39 @@ fun ThreadScreen(
             )
         }
 
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = viewModel::refresh,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+                .fillMaxWidth(),
         ) {
-            thread?.let { current ->
-                item {
-                    ThreadHeaderCard(
-                        thread = current,
-                        onReport = { onReport(current.thread_id) },
-                    )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
+            ) {
+                thread?.let { current ->
+                    item {
+                        ThreadHeaderCard(
+                            thread = current,
+                            onReport = { onReport(current.thread_id) },
+                        )
+                    }
+                    item {
+                        Text(
+                            text = stringResource(R.string.forum_thread_replies_section),
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = AccentDark,
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                        )
+                    }
                 }
-                item {
-                    Text(
-                        text = stringResource(R.string.forum_thread_replies_section),
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = AccentDark,
-                        modifier = Modifier.padding(start = 4.dp, top = 8.dp),
-                    )
+                items(items = messages, key = { it.message_id ?: 0L }) { message ->
+                    MessageBubble(message = message)
                 }
-            }
-            items(items = messages, key = { it.message_id ?: 0L }) { message ->
-                MessageBubble(message = message)
             }
         }
 
