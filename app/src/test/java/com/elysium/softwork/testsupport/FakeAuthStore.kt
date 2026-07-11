@@ -2,6 +2,7 @@ package com.elysium.softwork.testsupport
 
 import android.content.Context
 import com.elysium.softwork.iam.data.store.AuthStore
+import com.elysium.softwork.iam.domain.model.Company
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -126,6 +127,23 @@ open class FakeAuthStore(
     override suspend fun reauthenticate(): Result<User> {
         reauthenticateInvocations += 1
         return nextReauthenticateResult
+    }
+
+    /** Value returned by the next [getCompanies] call. */
+    var nextCompaniesResult: Result<List<Company>> = Result.success(emptyList())
+
+    /** Value returned by the next [associateCompany] call. */
+    var nextAssociateCompanyResult: Result<User> = Result.success(DEFAULT_USER)
+
+    /** Arguments (membershipId, companyId) of the most recent [associateCompany] call. */
+    var lastAssociateCompanyArgs: Pair<Long, Long>? = null
+        private set
+
+    override suspend fun getCompanies(): Result<List<Company>> = nextCompaniesResult
+
+    override suspend fun associateCompany(membershipId: Long, companyId: Long): Result<User> {
+        lastAssociateCompanyArgs = membershipId to companyId
+        return nextAssociateCompanyResult
     }
 
     override fun activeToken(): String? = storedToken

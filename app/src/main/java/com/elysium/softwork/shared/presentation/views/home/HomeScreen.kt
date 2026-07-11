@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.elysium.softwork.R
 import com.elysium.softwork.shared.presentation.components.InitialsAvatar
 import com.elysium.softwork.shared.presentation.components.SoftWorkCard
+import com.elysium.softwork.shared.presentation.viewmodel.HomeViewModel
 import com.elysium.softwork.worker.forum.domain.model.Thread
 import com.elysium.softwork.worker.forum.presentation.viewmodel.ForumViewModel
 import com.elysium.softwork.shared.presentation.theme.AccentDark
@@ -60,7 +61,12 @@ import com.elysium.softwork.shared.presentation.theme.Danger
  * sourced from [ForumViewModel] — whose `threads` flow is already scoped to the signed-in worker's
  * organization (company-filtered `GET /api/v1/forums`), so no additional filtering is needed here.
  *
- * @param userName name shown in the greeting and used to derive the avatar initials.
+ * The greeting name + avatar are sourced from the persisted session snapshot via [HomeViewModel]
+ * (populated on company association: first/last name, falling back to the pseudonym/email), so the
+ * dashboard shows real credentials with no logout cycle. The [userName] param is a fallback used
+ * only when nothing is cached yet.
+ *
+ * @param userName fallback name for the greeting/avatar when no cached identity exists.
  * @param onReportIncident handler for the Report-incident card.
  * @param onOpenForums handler for the Internal-forums card.
  * @param onOpenAssistant handler for the AI-assistant card.
@@ -78,8 +84,12 @@ fun HomeScreen(
     onOpenMembership: () -> Unit,
     modifier: Modifier = Modifier,
     forumViewModel: ForumViewModel = viewModel(factory = ForumViewModel.Factory),
+    homeViewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory),
 ) {
     val threads: List<Thread> by forumViewModel.threads.collectAsStateWithLifecycle()
+    val displayName: String by homeViewModel.displayName.collectAsStateWithLifecycle()
+    // Prefer the persisted real identity; fall back to the passed placeholder only when empty.
+    val resolvedName: String = displayName.ifBlank { userName }
 
     Column(
         modifier = modifier
@@ -89,7 +99,7 @@ fun HomeScreen(
     ) {
         Spacer(Modifier.height(16.dp))
 
-        Header(userName = userName)
+        Header(userName = resolvedName)
 
         Spacer(Modifier.height(20.dp))
 

@@ -27,6 +27,7 @@ jobs:
           echo "API_KEY_GEMINI=${{ secrets.API_KEY_GEMINI }}" >> secrets.properties
           echo "GOOGLE_OAUTH_CLIENT=${{ secrets.GOOGLE_OAUTH_CLIENT }}" >> secrets.properties
           echo "API_KEY_EXTERNAL_SERVICE=${{ secrets.API_KEY_EXTERNAL_SERVICE }}" >> secrets.properties
+          echo "PUBLISHABLE_KEY_STRIPE=${{ secrets.PUBLISHABLE_KEY_STRIPE }}" >> secrets.properties
 
       - name: Build APK with Java 21 Force
         env:

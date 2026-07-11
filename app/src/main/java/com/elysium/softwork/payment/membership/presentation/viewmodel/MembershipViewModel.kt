@@ -7,11 +7,13 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.elysium.softwork.SoftWorkApplication
 import com.elysium.softwork.payment.membership.application.usecase.ActivateMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.AddPaymentMethodUseCase
+import com.elysium.softwork.payment.membership.application.usecase.BypassMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.CancelSubscriptionUseCase
 import com.elysium.softwork.payment.membership.application.usecase.GetMembershipPlansUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObserveCurrentPlanUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObservePaymentMethodsUseCase
 import com.elysium.softwork.payment.membership.application.usecase.PayMembershipUseCase
+import com.elysium.softwork.payment.membership.application.usecase.StartStripeCheckoutUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ValidateMembershipUseCase
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.PaymentMethod
@@ -48,6 +50,8 @@ class MembershipViewModel(
     observeCurrentPlan: ObserveCurrentPlanUseCase,
     private val addPaymentMethod: AddPaymentMethodUseCase,
     private val payMembership: PayMembershipUseCase,
+    private val startStripeCheckout: StartStripeCheckoutUseCase,
+    private val bypassMembership: BypassMembershipUseCase,
     private val activateMembership: ActivateMembershipUseCase,
     private val cancelSubscription: CancelSubscriptionUseCase,
 ) : ViewModel() {
@@ -96,6 +100,15 @@ class MembershipViewModel(
 
     /** Latest backend validation / business-rule error, or `null` when none. */
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _checkoutUrl: MutableStateFlow<String?> = MutableStateFlow(null)
+
+    /**
+     * One-shot hosted Stripe Checkout URL. Emitted by [startCheckout] on a successful session
+     * creation; the selection screen observes it, launches the external browser via
+     * `Intent.ACTION_VIEW`, then calls [consumeCheckoutUrl]. `null` when idle.
+     */
+    val checkoutUrl: StateFlow<String?> = _checkoutUrl.asStateFlow()
 
     private val _isMembershipExpired: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
@@ -215,6 +228,81 @@ class MembershipViewModel(
         }
     }
 
+    /**
+     * Starts the **hosted Stripe Checkout** for [plan] (the native-card path is deprecated):
+     * runs the three-phase chain (create membership → create order → create Stripe Checkout
+     * Session) and emits the resulting `checkout_url` on [checkoutUrl] for the screen to open in
+     * the external browser. [paymentState] flips to
+     * [PaymentState.Processing] during the round-trip and back to [PaymentState.Idle] once the URL
+     * is ready (the browser completes the flow); a `400`/business-rule failure lands on
+     * [errorMessage] (and raises [isMembershipExpired] for a gated `/orders` failure). Re-entrant
+     * calls while processing are dropped.
+     */
+    fun startCheckout(plan: MembershipPlan) {
+        if (_paymentState.value is PaymentState.Processing) return
+        _paymentState.value = PaymentState.Processing
+        _errorMessage.value = null
+        viewModelScope.launch {
+            startStripeCheckout.invoke(plan)
+                .onSuccess { url -> _checkoutUrl.value = url }
+                .onFailure { throwable ->
+                    if (throwable.isMembershipGate()) _isMembershipExpired.value = true
+                    _errorMessage.value = resolveError(throwable)
+                }
+            _paymentState.value = PaymentState.Idle
+        }
+    }
+
+    /** Clears the [checkoutUrl] event after the screen has launched the browser. */
+    fun consumeCheckoutUrl() {
+        _checkoutUrl.value = null
+    }
+
+    private val _bypassMembershipId: MutableStateFlow<Long?> = MutableStateFlow(null)
+
+    /**
+     * One-shot `membership_id` created by the demo bypass. The selection screen observes it and
+     * routes to the company-selection step (which associates the account and opens the gate), then
+     * calls [consumeBypassMembershipId]. `null` when idle.
+     */
+    val bypassMembershipId: StateFlow<Long?> = _bypassMembershipId.asStateFlow()
+
+    /**
+     * **Development-only demo bypass.** Runs [BypassMembershipUseCase] (Phase 1 only —
+     * `POST /api/v1/memberships` with a hardcoded long-lived `ACTIVE` window) and, on success,
+     * emits the created `membership_id` on [bypassMembershipId] so the screen can route to the
+     * company-selection step. It does **not** flip the gate directly — that happens after the
+     * account is associated with a company.
+     *
+     * Behaves like [startCheckout] w.r.t. the shared [PaymentState] guard; a `400`/business-rule
+     * failure (or a missing `membership_id`) lands on [errorMessage]. Delete with the use case
+     * before a production build.
+     */
+    fun bypassMembership() {
+        if (_paymentState.value is PaymentState.Processing) return
+        _paymentState.value = PaymentState.Processing
+        _errorMessage.value = null
+        viewModelScope.launch {
+            bypassMembership.invoke().fold(
+                onSuccess = { membership ->
+                    _paymentState.value = PaymentState.Idle
+                    membership.membership_id
+                        ?.let { _bypassMembershipId.value = it }
+                        ?: run { _errorMessage.value = GENERIC_ERROR }
+                },
+                onFailure = { throwable ->
+                    _errorMessage.value = resolveError(throwable)
+                    _paymentState.value = PaymentState.Idle
+                },
+            )
+        }
+    }
+
+    /** Clears the [bypassMembershipId] event after the screen has routed to company selection. */
+    fun consumeBypassMembershipId() {
+        _bypassMembershipId.value = null
+    }
+
     /** Activates the worker's membership for [planKey], flipping the persisted gate. */
     fun activateMembership(planKey: String) {
         viewModelScope.launch { activateMembership.invoke(planKey) }
@@ -285,6 +373,15 @@ class MembershipViewModel(
                                 .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
                         },
                     ),
+                    startStripeCheckout = StartStripeCheckoutUseCase(
+                        store = store,
+                        accountIdProvider = {
+                            locator.sharedPrefsManager
+                                .getLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID)
+                                .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+                        },
+                    ),
+                    bypassMembership = BypassMembershipUseCase(store),
                     activateMembership = ActivateMembershipUseCase(store),
                     cancelSubscription = CancelSubscriptionUseCase(store),
                 ) as T

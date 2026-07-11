@@ -1,10 +1,13 @@
 package com.elysium.softwork.iam.data.network
 
+import com.elysium.softwork.iam.domain.model.Company
 import com.elysium.softwork.iam.domain.model.User
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Path
 
 /**
  * Retrofit contract for the live IAM endpoints of the FlowWork Spring Boot API.
@@ -71,4 +74,29 @@ interface AuthWebService {
      */
     @GET("api/v1/user_accounts")
     suspend fun getUserAccounts(): Response<List<User>>
+
+    /**
+     * Lists every company — the corporate directory backing the onboarding company-selection
+     * step. Each [Company] carries `company_id` + `name` for the picker.
+     */
+    @GET("api/v1/companies")
+    suspend fun getCompanies(): Response<List<Company>>
+
+    /**
+     * Updates a user account (`PUT /api/v1/user_accounts/{id}`). The body carries the
+     * `UpdateUserAccountRequest` subset of [User] — `user_id`, `email`, `password`,
+     * `anonymous_name`, `membership_id`, `company_id` — and the response echoes the updated
+     * account. Used by the onboarding step to bind the fresh `membership_id` + chosen
+     * `company_id` onto the worker's account.
+     */
+    @PUT("api/v1/user_accounts/{id}")
+    suspend fun updateUserAccount(@Path("id") id: Long, @Body account: User): Response<User>
+
+    /**
+     * Fetches a single user by `user_id` (`GET /api/v1/users/{id}`). The `UserResponse` fills
+     * [User.user_id], [User.name], [User.last_name], [User.phone_number], [User.dni] — the source
+     * of the worker's first/last name for the dashboard greeting.
+     */
+    @GET("api/v1/users/{id}")
+    suspend fun getUser(@Path("id") id: Long): Response<User>
 }

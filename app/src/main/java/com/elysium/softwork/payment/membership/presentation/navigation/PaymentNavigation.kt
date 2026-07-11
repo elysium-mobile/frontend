@@ -14,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.elysium.softwork.payment.membership.presentation.views.company.CompanySelectionScreen
 import com.elysium.softwork.payment.membership.presentation.views.methods.PaymentMethodsScreen
 import com.elysium.softwork.payment.membership.presentation.views.newcard.NewCardScreen
 import com.elysium.softwork.payment.membership.presentation.views.selection.MembershipSelectionScreen
@@ -103,14 +104,35 @@ fun NavGraphBuilder.paymentGraph(
         popEnterTransition = PushPopEnter,
         popExitTransition = PushPopExit,
     ) {
-        val onPlanSelected: (String) -> Unit = remember(navController) {
-            { planKey ->
-                navController.navigate(
-                    PaymentRoutes.methods(planKey = planKey, fromSettings = false),
-                )
-            }
+        // Native card flow deprecated: the screen now starts a hosted Stripe Checkout Session and
+        // hands off to the external browser, so no in-app navigation to the card composer is wired.
+        // The demo-bypass path routes to the intermediate company-selection step.
+        val onNavigateToCompanySelection: (Long) -> Unit = remember(navController) {
+            { membershipId -> navController.navigate(PaymentRoutes.companySelection(membershipId)) }
         }
-        MembershipSelectionScreen(onPlanSelected = onPlanSelected)
+        MembershipSelectionScreen(onNavigateToCompanySelection = onNavigateToCompanySelection)
+    }
+
+    composable(
+        route = PaymentRoutes.COMPANY_SELECTION,
+        arguments = listOf(
+            navArgument(PaymentRoutes.COMPANY_SELECTION_ARG_MEMBERSHIP_ID) {
+                type = NavType.StringType
+            },
+        ),
+        enterTransition = PushEnter,
+        exitTransition = PushExit,
+        popEnterTransition = PushPopEnter,
+        popExitTransition = PushPopExit,
+    ) { backStackEntry ->
+        // The membership_id is passed as a string per the route contract; parse to Long. A
+        // successful company association opens the gate, and MainActivity swaps the whole
+        // onboarding host out for the main shell — so no forward navigation is wired here.
+        val membershipId: Long = backStackEntry.arguments
+            ?.getString(PaymentRoutes.COMPANY_SELECTION_ARG_MEMBERSHIP_ID)
+            ?.toLongOrNull()
+            ?: 0L
+        CompanySelectionScreen(membershipId = membershipId)
     }
 
     composable(

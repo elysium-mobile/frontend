@@ -52,6 +52,10 @@ class SharedPrefsManager(context: Context) {
             remove(KEY_GOOGLE_SESSION)
             remove(KEY_MEMBERSHIP_ID)
             remove(KEY_COMPANY_ID)
+            remove(KEY_USER_ID)
+            remove(KEY_FIRST_NAME)
+            remove(KEY_LAST_NAME)
+            remove(KEY_ANONYMOUS_NAME)
         }
     }
 
@@ -119,6 +123,33 @@ class SharedPrefsManager(context: Context) {
 
         /** Storage key for the worker's email — retained for programmatic re-authentication. */
         const val KEY_USER_EMAIL: String = "user_email"
+
+        /**
+         * Storage key for the backend `user_id` (the domain user id, distinct from the
+         * `user_account_id`). Persisted from the `user_accounts` / `users` response so downstream
+         * contexts have the complete identity. Part of the IAM session — cleared by [clearSession].
+         */
+        const val KEY_USER_ID: String = "user_id"
+
+        /**
+         * Storage key for the worker's first name (`UserResponse.name`), resolved from
+         * `GET /api/v1/users/{id}`. Drives the dashboard greeting + avatar. Part of the IAM
+         * session — cleared by [clearSession].
+         */
+        const val KEY_FIRST_NAME: String = "first_name"
+
+        /**
+         * Storage key for the worker's last name (`UserResponse.last_name`). Drives the dashboard
+         * greeting + avatar alongside [KEY_FIRST_NAME]. Part of the IAM session — cleared by
+         * [clearSession].
+         */
+        const val KEY_LAST_NAME: String = "last_name"
+
+        /**
+         * Storage key for the worker's forum/survey pseudonym (`anonymous_name`), cached from the
+         * `user_accounts` response. Part of the IAM session — cleared by [clearSession].
+         */
+        const val KEY_ANONYMOUS_NAME: String = "anonymous_name"
 
         /**
          * Storage key for the worker's plain-text password.

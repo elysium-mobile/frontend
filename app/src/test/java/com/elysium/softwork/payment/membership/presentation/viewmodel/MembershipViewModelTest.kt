@@ -2,12 +2,14 @@ package com.elysium.softwork.payment.membership.presentation.viewmodel
 
 import com.elysium.softwork.payment.membership.application.usecase.ActivateMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.AddPaymentMethodUseCase
+import com.elysium.softwork.payment.membership.application.usecase.BypassMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.CancelSubscriptionUseCase
 import com.elysium.softwork.payment.membership.application.usecase.GetMembershipPlansUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ValidateMembershipUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObserveCurrentPlanUseCase
 import com.elysium.softwork.payment.membership.application.usecase.ObservePaymentMethodsUseCase
 import com.elysium.softwork.payment.membership.application.usecase.PayMembershipUseCase
+import com.elysium.softwork.payment.membership.application.usecase.StartStripeCheckoutUseCase
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.testsupport.FakeAuthStore
 import com.elysium.softwork.testsupport.FakeMembershipStore
@@ -63,6 +65,11 @@ class MembershipViewModelTest {
                 authStore = FakeAuthStore(),
                 accountIdProvider = { 1L },
             ),
+            startStripeCheckout = StartStripeCheckoutUseCase(
+                store = store,
+                accountIdProvider = { 1L },
+            ),
+            bypassMembership = BypassMembershipUseCase(store),
             activateMembership = ActivateMembershipUseCase(store),
             cancelSubscription = CancelSubscriptionUseCase(store),
         )

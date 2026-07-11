@@ -11,12 +11,15 @@ import java.time.LocalDate
  * keys, so a single field per concept covers both directions.
  *
  * @property membership_id primary key returned by every membership response.
+ * @property membership_plan_id selected plan tier the membership is created for (request); the
+ *   backend cross-references it to derive the enrolment. Absent on the plain read response.
  * @property membership_start start date (request + response), ISO `yyyy-MM-dd`.
  * @property membership_over end date (request + response), ISO `yyyy-MM-dd`.
  * @property membership_status status (request + response): `ACTIVE` / `PENDING` / `INACTIVE`.
  */
 data class Membership(
     val membership_id: Long? = null,
+    val membership_plan_id: Long? = null,
     val membership_start: String? = null,
     val membership_over: String? = null,
     val membership_status: String? = null,

@@ -202,6 +202,8 @@
 
     <!-- Payment & Membership (intentionally English in both locales per feature policy) -->
     <string name="payment_memberships_title">Memberships</string>
+    <string name="payment_demo_bypass">Bypass Payment [Demo Mode]</string>
+    <string name="payment_company_selection_title">Select your company</string>
     <string name="payment_membership_required">Active Membership Required</string>
     <string name="payment_membership_required_detail">Your account does not have an active membership. Choose a plan below to continue.</string>
     <string name="payment_select_plan">Select plan</string>

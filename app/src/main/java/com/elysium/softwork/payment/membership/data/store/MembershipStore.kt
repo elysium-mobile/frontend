@@ -48,8 +48,22 @@ interface MembershipStore {
      */
     suspend fun getMembership(id: Long): Result<Membership>
 
+    /**
+     * Creates a membership enrolment record (`POST /api/v1/memberships`) — the first step of the
+     * purchase chain. The backend validates the plan + date window server-side and returns the
+     * persisted record carrying the generated `membership_id` that the subsequent order references.
+     */
+    suspend fun createMembership(membership: Membership): Result<Membership>
+
     /** Creates a purchase order (`POST /api/v1/orders`). */
     suspend fun createOrder(order: Order): Result<Order>
+
+    /**
+     * Creates a hosted Stripe Checkout Session for [orderId] (`POST /api/v1/payments/stripe/checkout`)
+     * and returns its `checkout_url` — the page the app opens in the external browser. `null` when
+     * the backend omits the URL. [currency] is an ISO 4217 code (server lowercases; defaults to `usd`).
+     */
+    suspend fun createStripeCheckout(orderId: Long, currency: String): Result<String?>
 
     /** Registers a payment settling an order (`POST /api/v1/payments`). */
     suspend fun createPayment(payment: Payment): Result<Payment>

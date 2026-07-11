@@ -6,6 +6,7 @@ import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.Order
 import com.elysium.softwork.payment.membership.domain.model.Payment
 import com.elysium.softwork.payment.membership.domain.model.PaymentMethod
+import com.elysium.softwork.payment.membership.domain.model.StripeCheckout
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
 import com.elysium.softwork.shared.data.network.BadRequestResponse
@@ -54,8 +55,20 @@ class MembershipStoreImpl(
     override suspend fun getMembership(id: Long): Result<Membership> =
         runCatching { unwrap(webService.getMembership(id)) }
 
+    override suspend fun createMembership(membership: Membership): Result<Membership> =
+        runCatching { unwrap(webService.createMembership(membership)) }
+
     override suspend fun createOrder(order: Order): Result<Order> =
         runCatching { unwrap(webService.createOrder(order)) }
+
+    override suspend fun createStripeCheckout(orderId: Long, currency: String): Result<String?> =
+        runCatching {
+            unwrap(
+                webService.createStripeCheckout(
+                    StripeCheckout(order_id = orderId, currency = currency),
+                ),
+            ).checkout_url
+        }
 
     override suspend fun createPayment(payment: Payment): Result<Payment> =
         runCatching { unwrap(webService.createPayment(payment)) }

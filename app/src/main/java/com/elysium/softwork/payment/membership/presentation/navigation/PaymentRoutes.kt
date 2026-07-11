@@ -56,6 +56,25 @@ object PaymentRoutes {
     /** Add-card composer. The screen itself does not need to know the entry context. */
     const val NEW_CARD: String = "payment/new-card"
 
+    /** Argument name carrying the freshly created `membership_id` on the company-selection route. */
+    const val COMPANY_SELECTION_ARG_MEMBERSHIP_ID: String = "membershipId"
+
+    /**
+     * Route template: `payment/company-selection/{membershipId}`. The `membershipId` segment is
+     * decoded with `NavType.StringType` (the demo-bypass flow passes the id as a string) and parsed
+     * to a `Long` by the destination.
+     */
+    const val COMPANY_SELECTION: String =
+        "payment/company-selection/{$COMPANY_SELECTION_ARG_MEMBERSHIP_ID}"
+
+    /**
+     * Builds a concrete company-selection route.
+     *
+     * @param membershipId the membership just created by the demo bypass, associated onto the
+     *   worker's account once a company is picked.
+     */
+    fun companySelection(membershipId: Long): String = "payment/company-selection/$membershipId"
+
     /** Argument name carrying the plan key on the success route. */
     const val SUCCESS_ARG_PLAN_KEY: String = "planKey"
 

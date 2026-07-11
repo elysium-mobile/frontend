@@ -38,6 +38,14 @@ open class FakeMembershipStore : MembershipStore {
     var nextMembershipResult: Result<Membership> =
         Result.success(Membership(membership_id = 1L, membership_status = "ACTIVE"))
 
+    /** Value returned by the next [createMembership] (Phase 1 of the purchase chain) call. */
+    var nextCreatedMembershipResult: Result<Membership> =
+        Result.success(Membership(membership_id = 1L, membership_status = "ACTIVE"))
+
+    /** Most recent [Membership] passed to [createMembership], or `null` if never invoked. */
+    var lastCreatedMembership: Membership? = null
+        private set
+
     /** Value returned by the next [createOrder] call. */
     var nextOrderResult: Result<Order> = Result.success(Order(order_id = 1L))
 
@@ -64,9 +72,26 @@ open class FakeMembershipStore : MembershipStore {
 
     override suspend fun getMembership(id: Long): Result<Membership> = nextMembershipResult
 
+    override suspend fun createMembership(membership: Membership): Result<Membership> {
+        lastCreatedMembership = membership
+        return nextCreatedMembershipResult
+    }
+
     override suspend fun createOrder(order: Order): Result<Order> {
         lastCreatedOrder = order
         return nextOrderResult
+    }
+
+    /** Result returned by the next [createStripeCheckout] call. Defaults to a stub URL. */
+    var nextStripeCheckoutResult: Result<String?> = Result.success("https://checkout.stripe.test/session")
+
+    /** Most recent (orderId, currency) passed to [createStripeCheckout], or `null` if never invoked. */
+    var lastStripeCheckoutArgs: Pair<Long, String>? = null
+        private set
+
+    override suspend fun createStripeCheckout(orderId: Long, currency: String): Result<String?> {
+        lastStripeCheckoutArgs = orderId to currency
+        return nextStripeCheckoutResult
     }
 
     override suspend fun createPayment(payment: Payment): Result<Payment> = nextPaymentResult

@@ -36,6 +36,7 @@ android {
         buildConfigField("String", "API_KEY_GEMINI", "\"${System.getenv("API_KEY_GEMINI") ?: properties.getProperty("api.key.gemini", "")}\"")
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT", "\"${System.getenv("GOOGLE_OAUTH_CLIENT") ?: properties.getProperty("google.oauth.client", "")}\"")
         buildConfigField("String", "API_KEY_EXTERNAL_SERVICE", "\"${System.getenv("API_KEY_EXTERNAL_SERVICE") ?: properties.getProperty("api.key.external.service", "")}\"")
+        buildConfigField("String", "PUBLISHABLE_KEY_STRIPE", "\"${System.getenv("PUBLISHABLE_KEY_STRIPE") ?: properties.getProperty("publishable.key.stripe", "")}\"")
     }
 
     buildTypes {

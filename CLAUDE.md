@@ -1579,6 +1579,152 @@ neither a gate nor a stored instrument (it models payment as a transaction).
 - **One new string** `payment_price_format` (`S/. %1$d`) formats the integer price in both
   locales.
 
+#### Phase 13 addendum — hosted Stripe Checkout web redirect (native card flow deprecated)
+
+`MembershipSelectionScreen` no longer routes into the native card composer. Tapping a plan CTA now
+starts a **hosted Stripe Checkout Session** and hands off to the external device browser:
+
+- **DTO**: new annotation-free `StripeCheckout` bean (`order_id` / `currency` request, `checkout_url`
+  response — snake_case, Bean shortcut). `MembershipWebService.createStripeCheckout` →
+  `POST /api/v1/payments/stripe/checkout`.
+- **Store**: `MembershipStore.createStripeCheckout(orderId, currency): Result<String?>` returns the
+  `checkout_url` (via the shared `unwrap`/`throwTyped`).
+- **Use case**: `StartStripeCheckoutUseCase` creates the order (`user_account_id`/`price`/`membership_id`)
+  then the checkout session, yielding the URL. Unlike the deprecated `PayMembershipUseCase`, it does
+  **not** register a payment or re-auth — the hosted page charges, the backend settles via its Stripe
+  webhook, and the app re-validates the gate on next resume/login.
+- **ViewModel**: `MembershipViewModel.startCheckout(plan)` runs the use case behind the existing
+  `PaymentState.Processing` flag and emits a one-shot `checkoutUrl: StateFlow<String?>` (consumed via
+  `consumeCheckoutUrl()`); a `400`/gate failure lands on `errorMessage`.
+- **Screen**: `MembershipSelectionScreen` collects `checkoutUrl` and, in a `LaunchedEffect`, fires
+  `Intent(ACTION_VIEW, Uri.parse(url))` + `FLAG_ACTIVITY_NEW_TASK` via `LocalContext`, then consumes.
+  Its `onPlanSelected` param + the `PaymentNavigation` → `METHODS` wiring are removed.
+- **Card screens retained but off the selection path.** `NewCardScreen` / `PaymentMethodsScreen` stay
+  reachable **only** from Profile → payment methods (the `fromSettings = true` cancel-subscription
+  path); the onboarding flow bypasses them entirely.
+- ⚠️ **Contract note.** `ELYSIUM-API_DOCUMENTATION.md` §11.2 documents this endpoint as returning
+  `client_secret` (a PaymentIntent for Stripe.js/Elements), **not** `checkout_url`. This implementation
+  follows the REFI's hosted-redirect contract; if the deployed backend still returns `client_secret`,
+  `checkout_url` is null and no redirect fires (surface as a follow-up to reconcile doc vs. deployment).
+- `FakeMembershipStore` + `MembershipViewModelTest` updated for the new store method + ctor param.
+
+#### Phase 13 addendum — three-phase membership→order→checkout creation chain
+
+The backend enforces that an order cannot be registered without referencing a pre-existing, active,
+within-date-range membership record. `StartStripeCheckoutUseCase` was rewritten from the two-phase
+(order → checkout) flow into the mandated **three-phase sequential chain**, short-circuiting on the
+first failure:
+
+1. **`POST /api/v1/memberships`** — binds `membership_plan_id` (the tapped tier's `plan_id`), an
+   `ACTIVE` status, and the `[membership_start, membership_over]` validity window (a one-month
+   enrolment starting now). Captures the generated `membership_id`.
+2. **`POST /api/v1/orders`** — binds `user_account_id` (from prefs), `amount` (the plan `price`), and
+   the freshly created `membership_id`. Captures `order_id`. (This closes the earlier 400 caused by
+   the order payload omitting `membership_id`.)
+3. **`POST /api/v1/payments/stripe/checkout`** — for that `order_id`; returns `checkout_url`, opened
+   in the external browser (unchanged Phase-3 `Intent.ACTION_VIEW` launch in the screen).
+
+- **`Membership` bean** gained `membership_plan_id: Long?` (request-only; absent on the plain read
+  response — nullable per the bean shortcut).
+- **`MembershipStore.createMembership(membership): Result<Membership>`** added, wired to the existing
+  `MembershipWebService.createMembership` (`POST /api/v1/memberships`) via the shared `unwrap`/`throwTyped`.
+- **Date format.** The chain renders `membership_start` / `membership_over` through the canonical
+  `DateTimeFormats.format(Instant)` UTC-instant policy (trailing `Z` + millis) — `start = Instant.now()`,
+  `over = start + 1 month` (computed via `ZoneOffset.UTC`). No use-case-local pattern; consistent with
+  every other outgoing timestamp in the app.
+- `FakeMembershipStore` gained `createMembership` (+ `nextCreatedMembershipResult` / `lastCreatedMembership`).
+
+#### Phase 13 addendum — development-only demo-mode payment bypass
+
+> **⚠️ Temporary — delete before a production build.** A stealth "Bypass Payment [Demo Mode]" trigger
+> lets the team walk the paywall → home flow without touching the financial gateway.
+
+- **UI**: `MembershipSelectionScreen`'s `SelectionHeader` gained a trailing `Danger`-tinted clickable
+  `Text` (`payment_demo_bypass`, same string both locales per the context's English-only policy)
+  wired to `MembershipViewModel::bypassMembership`.
+- **Use case** — `BypassMembershipUseCase(store)`: **single-phase** — issues only
+  `POST /api/v1/memberships` (skips orders + Stripe checkout) with a hardcoded `ACTIVE` window
+  (`membership_plan_id = 1`, `2026-07-10T00:00:00Z` → `2029-07-10T00:00:00Z`). The REFI specified the
+  demo dates as offset-free `2026-07-10T00:00:00`; per the standing "no `yyyy-MM-dd'T'HH:mm:ss`"
+  instruction they are rendered as **UTC instants** (trailing `Z`) to stay on the `DateTimeFormats`
+  policy.
+- **ViewModel** — `bypassMembership()`: runs the use case behind the shared `PaymentState` guard;
+  on success flips the persisted gate via `ActivateMembershipUseCase` (`DEMO_PLAN_KEY = "1"`), which
+  the `MainActivity` `hasMembership` collector reacts to — hot-swapping the worker straight into the
+  main shell (Home dashboard). A `400`/business-rule failure lands on `errorMessage`, gate left closed.
+- **Cleanup**: delete `BypassMembershipUseCase`, `MembershipViewModel.bypassMembership`, the header
+  trigger + `payment_demo_bypass` strings, and the test wiring before shipping.
+
+#### Phase 13 addendum — post-bypass company-selection + `user_accounts` PUT association
+
+The demo bypass no longer opens the gate directly — it routes through an intermediate
+company-provisioning step that binds the session to a company before dashboard entry (so the
+company-scoped forum resolves immediately):
+
+- **Flow**: `bypassMembership()` now emits the created `membership_id` on a one-shot
+  `bypassMembershipId: StateFlow<Long?>` (no gate flip). `MembershipSelectionScreen` observes it and
+  navigates to `PaymentRoutes.COMPANY_SELECTION` (`payment/company-selection/{membershipId}`,
+  `NavType.StringType` arg → parsed to `Long`) via the new `onNavigateToCompanySelection` callback.
+- **`CompanySelectionScreen` + `CompanySelectionViewModel`** (payment presentation): loads the
+  corporate directory (`GET /api/v1/companies`) and renders a card list. Tapping a company calls
+  `AssociateCompanyUseCase` → `AuthStore.associateCompany(membershipId, companyId)`
+  (`PUT /api/v1/user_accounts/{id}`), then flips the gate via `ActivateMembershipUseCase` — the
+  `MainActivity` `hasMembership` collector hot-swaps the onboarding host out for the main shell,
+  clearing the back stack.
+- **IAM additions**: `Company` bean (`company_id`/`name`/`ruc`/`contact_email`/`contact_phone`,
+  snake_case, bean shortcut); `AuthWebService.getCompanies()` (`GET /companies`) +
+  `updateUserAccount(id, User)` (`PUT /user_accounts/{id}`); `AuthStore.getCompanies()` +
+  `associateCompany(...)` (impl adds a generic `unwrapList`); use cases `GetCompaniesUseCase` /
+  `AssociateCompanyUseCase`.
+- **PUT body construction**: `associateCompany` binds the `UpdateUserAccountRequest` subset —
+  `user_id` + `anonymous_name` + `email` re-read from the **live account** (`GET /user_accounts`,
+  matched by `user_account_id`, since neither is cached locally), the **plaintext** `password` from
+  `KEY_USER_PASSWORD` (**never** the response's BCrypt hash — echoing it back would re-hash and break
+  sign-in), plus the fresh `membership_id` + chosen `company_id`. **Google-linked accounts** cache a
+  blank password, but the DTO enforces `@NotBlank`, so a blank/null cached password is replaced with a
+  non-blank placeholder (`PLACEHOLDER_PASSWORD = "BypassPassword123!"`); the backend disables password
+  checks for federated Google rows, so login state is unaffected. On `200` it persists
+  `KEY_USER_ACCOUNT_ID` + `KEY_MEMBERSHIP_ID` + `KEY_COMPANY_ID`.
+- **Cleanup**: delete `CompanySelectionScreen`/`ViewModel` and the `COMPANY_SELECTION` route with the
+  rest of the demo bypass; `Company` + `getCompanies`/`associateCompany` may stay if the real
+  onboarding reuses company selection.
+- `FakeAuthStore` gained `getCompanies` / `associateCompany` (+ `nextCompaniesResult` /
+  `nextAssociateCompanyResult` / `lastAssociateCompanyArgs`).
+
+#### Phase 13 addendum — employee-profile team sync (added then reverted)
+
+An interim REFI chained a **second** `PUT /api/v1/employee-profile/{employeeProfileId}` inside
+`associateCompany` (resolving a `work_of_team_id` from `GET /api/v1/work-teams`). It was **reverted**:
+the chain hard-required a cached `employee_profile_id` and surfaced a blocking `"No employee profile id
+to sync"` state on `CompanySelectionScreen` before the `user_accounts` link existed. Per the revert
+REFI, company association now performs **only** the `PUT /api/v1/user_accounts/{id}` transaction
+(carrying `user_id`/`email`/`password`/`anonymous_name`/`membership_id`/`company_id`) and opens the
+gate on its `200` alone; **employee-profile provisioning/recovery is handled downstream** once the
+account ledger is updated. The `WorkTeam` bean, `AuthWebService.getWorkTeams()` /
+`updateEmployeeProfile()`, and `AuthStoreImpl.syncEmployeeProfileTeam` were removed with the revert.
+
+#### Phase 13 addendum — full session snapshot persisted on association + reactive dashboard header
+
+After the `user_accounts` PUT succeeds, `associateCompany` now fetches the full user record
+(`GET /api/v1/users/{user_id}`, `AuthWebService.getUser` → `UserResponse` = `name`/`last_name`/…)
+and commits the **complete** session snapshot to `SharedPrefsManager`, so every context reads real
+credentials without a logout cycle:
+
+- **New prefs keys** (all part of the IAM session — added to `clearSession()`): `KEY_USER_ID`,
+  `KEY_FIRST_NAME`, `KEY_LAST_NAME`, `KEY_ANONYMOUS_NAME`. Email reuses the existing `KEY_USER_EMAIL`
+  (the REFI's `KEY_EMAIL`) — no duplicate email key, to keep a single source of truth.
+- **Persistence**: `KEY_USER_ACCOUNT_ID`, `KEY_USER_ID`, `KEY_MEMBERSHIP_ID`, `KEY_COMPANY_ID`,
+  `KEY_FIRST_NAME`/`KEY_LAST_NAME` (from the `users` fetch), `KEY_USER_EMAIL`, `KEY_ANONYMOUS_NAME`
+  (from the account response). The `GET /users/{id}` is **best-effort** (the PUT association already
+  succeeded — a names hiccup must not fail it); first/last name simply stay unset if it fails.
+- **Reactive dashboard**: new `HomeViewModel` (`shared/presentation/viewmodel/`, service-locator
+  factory) resolves a display name from prefs (`first + last` → pseudonym → email) and exposes it as
+  `displayName: StateFlow<String>`. `HomeScreen` collects it for the greeting + `InitialsAvatar`,
+  falling back to the passed `userName` placeholder (`MainActivity`'s `home_user_name_placeholder`)
+  only when nothing is cached. The dashboard mounts after the association commits, so the first
+  composition already shows the real name; `refresh()` re-reads for any later mutation (future
+  profile edit).
+
 ### 🚧 Phase 14 — Uniform snake_case wire migration
 
 The backend completed a **uniform snake_case** migration (documented in

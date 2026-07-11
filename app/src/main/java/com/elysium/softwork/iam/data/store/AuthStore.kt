@@ -1,6 +1,7 @@
 package com.elysium.softwork.iam.data.store
 
 import android.content.Context
+import com.elysium.softwork.iam.domain.model.Company
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.utils.discriminators.SessionRecovery
 import kotlinx.coroutines.flow.StateFlow
@@ -93,6 +94,22 @@ interface AuthStore {
      * are stored.
      */
     suspend fun reauthenticate(): Result<User>
+
+    /**
+     * Lists the available companies (`GET /api/v1/companies`) for the onboarding
+     * company-selection step. Browse-only; never mutates the session.
+     */
+    suspend fun getCompanies(): Result<List<Company>>
+
+    /**
+     * Associates the signed-in worker's account with [membershipId] and [companyId]
+     * (`PUT /api/v1/user_accounts/{userAccountId}`). Retains the account's existing `user_id` /
+     * `email` / `anonymous_name` (read from the live account) and the cached plaintext password
+     * (never the response's BCrypt hash). On a successful `200` it persists `company_id`,
+     * `membership_id`, and `user_account_id` into local session storage so the company-scoped
+     * forum and Employee Assistant pick up the context immediately.
+     */
+    suspend fun associateCompany(membershipId: Long, companyId: Long): Result<User>
 
     /** Returns the locally-cached JWT, or `null` when no session exists. */
     fun activeToken(): String?

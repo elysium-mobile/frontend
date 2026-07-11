@@ -2,6 +2,7 @@ package com.elysium.softwork.payment.membership.presentation.views.selection
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,11 +24,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -56,24 +61,49 @@ import com.elysium.softwork.shared.presentation.theme.PrimarySky
  * (The former client-side `isRecommended` accent has no backend equivalent, so every card
  * uses the neutral sky accent.)
  *
- * @param onPlanSelected invoked with the plan's `plan_id` (as a string) when the worker taps
- *   a plan card's CTA.
+ * Tapping a plan CTA no longer opens the native card composer (deprecated): it starts a **hosted
+ * Stripe Checkout Session** and, on success, hands off to the external device browser via
+ * `Intent.ACTION_VIEW` so the secure hosted page completes the payment.
  */
 @Composable
 fun MembershipSelectionScreen(
-    onPlanSelected: (String) -> Unit,
+    onNavigateToCompanySelection: (Long) -> Unit = {},
     viewModel: MembershipViewModel = viewModel(factory = MembershipViewModel.Factory),
 ) {
     val plans: List<MembershipPlan> by viewModel.availablePlans.collectAsStateWithLifecycle()
     val errorMessage: String? by viewModel.errorMessage.collectAsStateWithLifecycle()
     val isMembershipExpired: Boolean by viewModel.isMembershipExpired.collectAsStateWithLifecycle()
+    val checkoutUrl: String? by viewModel.checkoutUrl.collectAsStateWithLifecycle()
+    val bypassMembershipId: Long? by viewModel.bypassMembershipId.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Demo bypass: once the membership is created, route to the company-selection step and consume
+    // the event so a recomposition can't re-navigate.
+    LaunchedEffect(bypassMembershipId) {
+        bypassMembershipId?.let { membershipId ->
+            onNavigateToCompanySelection(membershipId)
+            viewModel.consumeBypassMembershipId()
+        }
+    }
+
+    // Hosted checkout redirect: once the backend returns the session URL, open it in the external
+    // browser and consume the event so a recomposition can't relaunch it. FLAG_ACTIVITY_NEW_TASK
+    // keeps it safe even if `context` is not an Activity.
+    LaunchedEffect(checkoutUrl) {
+        checkoutUrl?.let { url ->
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            viewModel.consumeCheckoutUrl()
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(AccentWhite),
     ) {
-        SelectionHeader()
+        SelectionHeader(onBypass = viewModel::bypassMembership)
 
         // Membership business-gate: driven by enrolment-status validation (`/memberships`) or an
         // order-push failure — NOT by the plan catalogue, which always renders below. When the
@@ -102,26 +132,44 @@ fun MembershipSelectionScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(items = plans, key = { plan -> plan.plan_id ?: 0L }) { plan ->
-                PlanCard(plan = plan, onSelect = onPlanSelected)
+                PlanCard(plan = plan, onSelect = viewModel::startCheckout)
             }
         }
     }
 }
 
+/**
+ * Selection header: screen title plus a **development-only** "Bypass Payment [Demo Mode]" trigger
+ * pinned to the trailing edge. The bypass runs the single-phase membership demo shortcut
+ * ([MembershipViewModel.bypassMembership]); remove it (and its ViewModel/use-case hooks) before a
+ * production build.
+ *
+ * @param onBypass invoked when the demo bypass trigger is tapped.
+ */
 @Composable
-private fun SelectionHeader() {
-    Box(
+private fun SelectionHeader(onBypass: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
             .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.CenterStart,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = stringResource(R.string.payment_memberships_title),
             color = PrimaryNavy,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = stringResource(R.string.payment_demo_bypass),
+            color = Danger,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clickable(onClick = onBypass)
+                .padding(start = 12.dp),
         )
     }
 }
@@ -154,12 +202,12 @@ private fun MembershipRequiredBanner() {
 }
 
 @Composable
-private fun PlanCard(plan: MembershipPlan, onSelect: (String) -> Unit) {
+private fun PlanCard(plan: MembershipPlan, onSelect: (MembershipPlan) -> Unit) {
     val accent: Color = PrimarySky
     val planName: String = plan.plan_name.orEmpty()
     val priceLabel: String = plan.price?.let { stringResource(R.string.payment_price_format, it) }.orEmpty()
     val features: List<String> = plan.benefit_response_list?.mapNotNull { it.title }.orEmpty()
-    val onClick: () -> Unit = { onSelect((plan.plan_id ?: 0L).toString()) }
+    val onClick: () -> Unit = { onSelect(plan) }
 
     SoftWorkCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(20.dp)) {

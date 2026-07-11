@@ -139,8 +139,10 @@ Authorization: Bearer <JWT_TOKEN>    (except public endpoints)
 | `PORT` | Server | HTTP port (default 8080) |
 | `API_HOST` | Swagger | Public host for the server URL shown in Swagger |
 | `CLOUDINARY_URL` | Cloudinary | Connection URL including credentials |
-| `STRIPE_SECRET_KEY` | Stripe | API secret key (`sk_...`) |
+| `STRIPE_SECRET_KEY` | Stripe | API secret key (`sk_test_...` dev / `sk_live_...` prod) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe | Webhook signing secret (`whsec_...`) |
+| `STRIPE_SUCCESS_URL` | Stripe | Redirect URL after successful payment (e.g. `https://miapp.com/pago/exito`) |
+| `STRIPE_CANCEL_URL` | Stripe | Redirect URL if the customer cancels (e.g. `https://miapp.com/pago/cancelado`) |
 | `GOOGLE_GENAI_API_KEY` | Google Gemini | Google GenAI API key |
 | `GOOGLE_CLIENT_ID` | Google Sign-In | OAuth 2.0 Client ID used as the expected `id_token` audience |
 
@@ -1502,9 +1504,11 @@ curl -s -X POST "$BASE/api/v1/survey-responses" \
 
 #### DELETE `/api/v1/payments/{id}` — Delete
 
-> In addition to this manual CRUD, there are dedicated endpoints for the real Stripe
-> payment flow under `/api/v1/payments/stripe/**`. See [section 11.2](#112-stripe--online-payments)
-> for the full detail (checkout, retry, refund, webhook).
+> In addition to this manual CRUD, the real Stripe payment flow runs through
+> `/api/v1/payments/stripe/**`. The backend creates a **Stripe Checkout Session** and returns a
+> hosted checkout URL. The frontend redirects the customer to that URL; Stripe handles the entire
+> payment flow (card details, 3D Secure, confirmation) on its hosted page. See
+> [section 11.2](#112-stripe--online-payments) for the full detail (checkout, retry, refund, webhook).
 
 ---
 
@@ -2306,7 +2310,11 @@ automatically runs `storageService.delete(url)` to avoid leaving orphaned files 
 
 ---
 
-### 11.2 Stripe — Online Payments
+### 11.2 Stripe — Online Payments (Checkout Session)
+
+**UPDATE (2026-07-10): Migrated from PaymentIntent + Stripe.js/Elements to Stripe Checkout Session.**
+The backend now creates a **hosted Checkout Session** and returns a `checkoutUrl` (not a `clientSecret`).
+The frontend must redirect the customer to `checkoutUrl` instead of calling `stripe.confirmCardPayment()`.
 
 **Configuration** (`StripeProperties.java`):
 ```java
@@ -2315,18 +2323,21 @@ automatically runs `storageService.delete(url)` to avoid leaving orphaned files 
 public class StripeProperties {
     private String secretKey;
     private String webhookSecret;
+    private String successUrl;
+    private String cancelUrl;
 }
 ```
 
-- `stripe.secret-key` ← `STRIPE_SECRET_KEY` (`sk_...`)
-- `stripe.webhook-secret` ← `STRIPE_WEBHOOK_SECRET` (`whsec_...`)
-- The API key is initialized via `@PostConstruct` inside `StripePaymentGatewayAdapter`:
-  ```java
-  @PostConstruct
-  public void initStripe() {
-      Stripe.apiKey = stripeProperties.getSecretKey();
-  }
-  ```
+| Property | Environment Variable | Required | Description |
+|---|---|---|---|
+| `stripe.secret-key` | `STRIPE_SECRET_KEY` | Yes | API key (`sk_test_...` for dev, `sk_live_...` for prod) |
+| `stripe.webhook-secret` | `STRIPE_WEBHOOK_SECRET` | Yes | Webhook signing secret |
+| `stripe.success-url` | `STRIPE_SUCCESS_URL` | Yes | Redirect URL after successful payment (e.g. `https://miapp.com/pago/exito`) |
+| `stripe.cancel-url` | `STRIPE_CANCEL_URL` | Yes | Redirect URL if the customer cancels (e.g. `https://miapp.com/pago/cancelado`) |
+
+> **Startup validation**: All four properties are validated at application startup via
+> `@PostConstruct`. If any are missing, or if `secretKey` does not match the expected environment
+> (test key in dev, live key in prod), the application fails to start with a descriptive error.
 
 **Controller**: `StripePaymentController`
 **Base route**: `/api/v1/payments/stripe`
@@ -2334,47 +2345,67 @@ public class StripeProperties {
 
 ---
 
-#### POST `/api/v1/payments/stripe/checkout` — Create PaymentIntent
+#### POST `/api/v1/payments/stripe/checkout` — Create Checkout Session
 
-Creates a Stripe `PaymentIntent` for an existing `Order` and returns the `client_secret` that the
-frontend uses with Stripe.js/Stripe Elements to confirm the payment.
+Creates a Stripe **Checkout Session** (`Session` with `Mode.PAYMENT`) for an existing `Order` and
+returns the hosted checkout URL. The frontend redirects the customer to this URL; Stripe handles
+the entire payment flow (card details, 3D Secure, confirmation) on its hosted page.
 
 **Request** (`CreateStripeCheckoutRequest`):
 ```json
 {
   "order_id": 42,
-  "currency": "usd"
+  "currency": "usd",
+  "success_url": "https://miapp.com/pago/exito?session_id={CHECKOUT_SESSION_ID}",
+  "cancel_url": "https://miapp.com/pago/cancelado"
 }
 ```
 
 | JSON Key | Java Field | Type | Validation | Notes |
 |---|---|---|---|---|
 | `order_id` | `orderId` | Long | @NotNull | The Order must exist |
-| `currency` | `currency` | String | Optional | ISO 4217 code, lowercased before sending to Stripe; if null/blank, the adapter defaults to `"usd"` |
+| `currency` | `currency` | String | Optional | ISO 4217 code; defaults to `"usd"` if null/blank |
+| `success_url` | `successUrl` | String | Optional | Overrides `stripe.success-url`; Stripe appends `?session_id={CHECKOUT_SESSION_ID}` automatically |
+| `cancel_url` | `cancelUrl` | String | Optional | Overrides `stripe.cancel-url` |
+
+> If `success_url` or `cancel_url` are omitted, the adapter falls back to the configured
+> `stripe.success-url` and `stripe.cancel-url` respectively. If neither the request nor the
+> configuration provides a URL, the endpoint rejects with `400 Bad Request`.
 
 **Response 200** (`StripeCheckoutResponse`):
 ```json
 {
-  "client_secret": "pi_3ABC123_secret_XYZ789"
+  "checkout_url": "https://checkout.stripe.com/c/pay_cs_test_a1b2c3d4e5f6",
+  "session_id": "cs_test_a1b2c3d4e5f6"
 }
 ```
 
-**Internal details of the Stripe PaymentIntent created**:
-- `amount`: `order.getAmount() * 100` (Stripe uses the smallest currency unit, e.g. cents)
-- `currency`: lowercased, defaults to `"usd"`
-- `automaticPaymentMethods`: enabled
-- `metadata`: `{ "orderId": <id>, "membershipId": <id> }` — Stripe metadata keys are set literally in
-  Java code and are **not** transformed by `@JsonNaming` (they are not DTO fields)
+| JSON Key | Java Field | Type | Notes |
+|---|---|---|---|
+| `checkout_url` | `checkoutUrl` | String | The hosted Stripe Checkout page — redirect the customer here |
+| `session_id` | `sessionId` | String | Stripe Checkout Session ID (`cs_...`) — can be used for frontend verification |
+
+**Internal details of the Stripe Checkout Session created**:
+- `mode`: `PAYMENT` (one-time payment)
+- `line_items`: `[{ price_data: { currency, unit_amount: order.amount * 100, product_data: { name: "Order #<id>" } }, quantity: 1 }]`
+- `metadata` (on Session): `{ "orderId": "<orderId>", "membershipId": "<membershipId>" }`
+- `payment_intent_data.metadata` (on the underlying PaymentIntent): `{ "orderId": "<orderId>", "membershipId": "<membershipId>" }`
+  — metadata is set on **both** objects so that both `checkout.session.completed` and
+  `payment_intent.succeeded` webhooks can resolve the internal Order ID.
+- `success_url`: the resolved URL with `{CHECKOUT_SESSION_ID}` template
+- `cancel_url`: the resolved URL
+- **Idempotency key**: `checkout-session-{orderId}` (set in the command constructor)
 
 **Errors**:
-- `400 Bad Request`: Order not found or invalid request
-- `500 Internal Server Error`: `"[StripePaymentGatewayAdapter] Failed to create Stripe PaymentIntent: {detail}"` (wraps `StripeException`)
+- `400 Bad Request`: Order not found, missing successUrl/cancelUrl, or invalid request
+- `500 Internal Server Error`: `"[StripePaymentGatewayAdapter] Failed to create Stripe Checkout Session: {detail}"` (wraps `StripeException`)
 
 ---
 
 #### POST `/api/v1/payments/stripe/{paymentId}/retry` — Retry failed payment
 
-Creates a **new** `PaymentIntent` to retry a payment that previously failed.
+Creates a **new** Checkout Session to retry a payment that previously failed. The customer is
+redirected to the returned `checkout_url` to attempt payment again.
 
 **Path param**: `paymentId` (Long)
 
@@ -2389,7 +2420,7 @@ Creates a **new** `PaymentIntent` to retry a payment that previously failed.
 | JSON Key | Java Field | Type | Validation |
 |---|---|---|---|
 | `order_id` | `orderId` | Long | @NotNull |
-| `currency` | `currency` | String | @NotNull (unlike checkout, here it is mandatory) |
+| `currency` | `currency` | String | @NotNull |
 
 **Business validation**: the `Payment` referenced by `paymentId` must exist and be in **`FAILED`**
 status (`payment.isFailed()`). Otherwise it is rejected with:
@@ -2401,7 +2432,7 @@ Cannot retry Payment in status: {status}. Only FAILED payments can be retried.
 ```json
 {
   "payment_id": 5,
-  "client_secret": "pi_3XYZ456_secret_ABC123",
+  "checkout_url": "https://checkout.stripe.com/c/pay_cs_test_retry_abc123",
   "new_transaction_id": "pi_3XYZ456"
 }
 ```
@@ -2409,7 +2440,7 @@ Cannot retry Payment in status: {status}. Only FAILED payments can be retried.
 | JSON Key | Java Field | Notes |
 |---|---|---|
 | `payment_id` | `paymentId` | The same original Payment (ID does not change) |
-| `client_secret` | `clientSecret` | New Stripe secret to confirm the payment from the frontend |
+| `checkout_url` | `checkoutUrl` | New hosted Checkout Session URL — redirect the customer here |
 | `new_transaction_id` | `newTransactionId` | New Stripe PaymentIntent ID — replaces the previous `transaction_id` on the Payment |
 
 **Side effects**: the original `Payment` is updated with the new `transactionId` and its status is
@@ -2438,15 +2469,16 @@ reset to `PENDING`. A `PaymentRetryInitiatedEvent` is published.
 |---|---|---|---|---|
 | `order_id` | `orderId` | Long | @NotNull | |
 | `reason` | `reason` | String | @NotNull | Must map to a value of Stripe's `RefundCreateParams.Reason` enum (e.g. `requested_by_customer`, `duplicate`, `fraudulent`) |
-| `refund_amount_cents` | `refundAmountCents` | Integer | @NotNull | **typo fixed**: the JSON key was previously `refoundAmountCents` (extra "o") via an `@JsonProperty` — now correctly `refund_amount_cents`. Amount in cents; if omitted, the refund logic falls back to a full refund |
+| `refund_amount_cents` | `refundAmountCents` | Integer | @NotNull | Amount in cents; provides a partial refund when specified |
 
-> **FIXED**: previously the JSON key was literally `refoundAmountCents` (typo of "refund" → "refound").
-> The offending `@JsonProperty` has been removed, so the field now serializes/deserializes as
-> `refund_amount_cents`. **Clients that were sending `refoundAmountCents` must switch to
-> `refund_amount_cents`.**
+> **Backward compatibility note**: The refund endpoint is **unchanged** from the previous
+> PaymentIntent-based flow. Refunds always operate on a Stripe `PaymentIntent`, which continues to
+> exist under the hood of the Checkout Session. The `paymentIntentId` stored as `transaction_id` on
+> the `Payment` record is used to create the refund.
 
 **Business validation**: the `Payment` must exist and be in **`SUCCEEDED`** status
-(`payment.isSucceeded()`). Otherwise it is rejected with:
+(`payment.isSucceeded()`). Additionally, `payment.getTransactionId()` must not be null/blank.
+Otherwise it is rejected with:
 ```
 Cannot refund Payment in status: {status}
 ```
@@ -2469,7 +2501,7 @@ Cannot refund Payment in status: {status}
 | `status` | `status` |
 
 **Internal details of the Stripe Refund created**:
-- `paymentIntent`: taken from `payment.getTransactionId()` (the original PaymentIntent)
+- `paymentIntent`: taken from `payment.getTransactionId()` (the PaymentIntent ID stored during checkout)
 - `amount`: optional — if `refund_amount_cents` is provided, it's a partial refund
 - `reason`: converted from the received String to the `RefundCreateParams.Reason` enum
 - `metadata`: `{ "orderId": <id>, "paymentId": <id> }`
@@ -2509,13 +2541,22 @@ try {
 }
 ```
 
-**Event types handled**:
+**Event types handled** (listed in order of precedence):
 
-| Stripe Event | Backend Action |
-|---|---|
-| `payment_intent.succeeded` | Publishes `StripePaymentSucceededEvent(source, stripePaymentIntentId, orderId, amountReceived)` — `orderId` is read from the PaymentIntent's `metadata.orderId` |
-| `payment_intent.payment_failed` | Publishes `StripePaymentFailedEvent(source, stripePaymentIntentId, orderId, failureReason)` — `failureReason` comes from `lastPaymentError.message`, or `"Unknown reason"` if not present |
-| `charge.refunded` | Publishes `RefundCompletedEvent(source, refundId, paymentId, orderId, amountCents, status)` — only if `metadata.orderId` and `metadata.paymentId` are present on the Refund |
+| Stripe Event | Backend Action | Role |
+|---|---|---|
+| `checkout.session.completed` | Deserializes the `Session`, extracts `paymentIntentId` and `orderId` from Session metadata, then publishes `StripePaymentSucceededEvent(source, paymentIntentId, orderId, amountTotal)` | **PRIMARY** — this is the main event for the Checkout Session flow |
+| `payment_intent.succeeded` | Deserializes the `PaymentIntent`, reads `orderId` from PaymentIntent metadata (`payment_intent_data.metadata` set at session creation), publishes `StripePaymentSucceededEvent` | **FALLBACK** — skips if `paymentRepository.existsByTransactionId()` returns true (already processed by `checkout.session.completed`) |
+| `payment_intent.payment_failed` | Publishes `StripePaymentFailedEvent(source, stripePaymentIntentId, orderId, failureReason)` — `failureReason` comes from `lastPaymentError.message`, or `"Unknown reason"` if not present | Failure handling |
+| `charge.refunded` | Publishes `RefundCompletedEvent(source, refundId, paymentId, orderId, amountCents, status)` — only if `metadata.orderId` and `metadata.paymentId` are present on the Refund | Refund tracking |
+
+**Idempotency protection**: Three layers prevent duplicate processing:
+1. **Webhook event ID**: `processedStripeEventRepository` stores the Stripe `event.id` (unique
+   constraint). Already-processed events are acknowledged with `200 OK` without reprocessing.
+2. **Transaction ID**: The downstream `StripePaymentSucceededEventHandler` checks
+   `paymentRepository.existsByTransactionId()` before creating a new `Payment` record.
+3. **Database constraint**: The `payments.transaction_id` column has a `UNIQUE` constraint — a second
+   insert fails with `DataIntegrityViolationException`, rolling back the entire transaction.
 
 **Response 200 OK**:
 ```
@@ -2540,6 +2581,18 @@ Error processing webhook: {detail}
 > **Technical note**: this endpoint is annotated with `@Transactional`. To test it locally, it is
 > recommended to use the `stripe CLI` (`stripe listen --forward-to
 > localhost:8092/api/v1/payments/stripe/webhook`) to forward test events with a valid signature.
+
+---
+
+#### Post-payment flow summary
+
+1. Frontend → `POST /checkout` → receives `{ checkout_url, session_id }`
+2. Frontend → `window.location.href = checkout_url` (Stripe hosted page)
+3. Customer enters card details on Stripe's page
+4. Stripe → redirects browser to `success_url?session_id=cs_test_...` or `cancel_url`
+5. Stripe → fires `checkout.session.completed` webhook → backend creates `Payment` + activates `Membership`
+6. Stripe → (also) fires `payment_intent.succeeded` webhook → idempotency guard skips it
+7. Frontend (on `success_url`) → user sees confirmation (the backend already processed the payment)
 
 ---
 
@@ -2813,12 +2866,13 @@ curl -X POST $BASE/api/v1/orders \
   -H "Content-Type: application/json" \
   -d '{"user_account_id":1,"amount":99,"membership_id":1}'
 
-# 3. Create the Stripe PaymentIntent for that order
+# 3. Create the Stripe Checkout Session for that order
 curl -X POST $BASE/api/v1/payments/stripe/checkout \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"order_id":1,"currency":"usd"}'
-# → { "client_secret": "pi_..._secret_..." }  (use it in the frontend with Stripe.js)
+  -d '{"order_id":1,"currency":"usd","success_url":"http://localhost:3000/pago/exito","cancel_url":"http://localhost:3000/pago/cancelado"}'
+# → { "checkout_url": "https://checkout.stripe.com/c/pay_cs_test_...", "session_id": "cs_test_..." }
+# Redirect the customer to "checkout_url" — Stripe hosts the entire payment page.
 
 # 4. Upload an attachment (multipart, not JSON — form-field names stay camelCase)
 curl -X POST $BASE/api/v1/assets \
@@ -2902,7 +2956,8 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | Payment / Payment | method | `paymentMethod` | `payment_method` |
 | Payment / MembershipPlan | name | `planName` | `plan_name` |
 | Payment / MembershipPlan | benefits | `benefitResponseList` ⚠️ | `benefit_response_list` (verbose Java name) |
-| Payment / Stripe Checkout | client secret | `clientSecret` | `client_secret` |
+| Payment / Stripe Checkout | checkout URL | `checkoutUrl` | `checkout_url` |
+| Payment / Stripe Checkout | session ID | `sessionId` | `session_id` |
 | Payment / Stripe Refund | refund amount (request) | `refundAmountCents` | `refund_amount_cents` (**typo `refoundAmountCents` fixed**) |
 | Payment / Stripe Refund | refunded amount (response) | `refundedAmountCents` | `refunded_amount_cents` |
 | Notification / Detail | notification | `notificationId` | `notification_id` |
@@ -3005,7 +3060,7 @@ curl -X POST $BASE/api/v1/authentication/sign-up/employee/google \
 | `/api/v1/authentication/sign-up/employee/google` | POST | Public | `application/json` | Complete Google employee sign-up (phase 2) |
 | `/api/v1/authentication/sign-up/rrhh/google` | POST | Public | `application/json` | Complete Google RRHH sign-up (phase 2) |
 | `/api/v1/assets` | POST | JWT | `multipart/form-data` | Upload file to Cloudinary + create Asset |
-| `/api/v1/payments/stripe/checkout` | POST | JWT | `application/json` | Create a Stripe PaymentIntent |
+| `/api/v1/payments/stripe/checkout` | POST | JWT | `application/json` | Create a Stripe Checkout Session — returns `checkout_url` |
 | `/api/v1/payments/stripe/{paymentId}/retry` | POST | JWT | `application/json` | Retry a failed payment |
 | `/api/v1/payments/stripe/{paymentId}/refund` | POST | JWT | `application/json` | Initiate a refund |
 | `/api/v1/payments/stripe/webhook` | POST | **Stripe signature** (no JWT) | `application/json` | Receive asynchronous Stripe events |

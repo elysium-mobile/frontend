@@ -5,6 +5,7 @@ import com.elysium.softwork.payment.membership.domain.model.Membership
 import com.elysium.softwork.payment.membership.domain.model.MembershipPlan
 import com.elysium.softwork.payment.membership.domain.model.Order
 import com.elysium.softwork.payment.membership.domain.model.Payment
+import com.elysium.softwork.payment.membership.domain.model.StripeCheckout
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -50,6 +51,13 @@ interface MembershipWebService {
     // endregion
 
     // region Payments
+    /**
+     * Creates a hosted Stripe Checkout Session for an order and returns its `checkout_url`
+     * (opened in the external browser). Request/response both map to [StripeCheckout].
+     */
+    @POST("api/v1/payments/stripe/checkout")
+    suspend fun createStripeCheckout(@Body request: StripeCheckout): Response<StripeCheckout>
+
     /** Registers a payment settling an order. */
     @POST("api/v1/payments")
     suspend fun createPayment(@Body payment: Payment): Response<Payment>

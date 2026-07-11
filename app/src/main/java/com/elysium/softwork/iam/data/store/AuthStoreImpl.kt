@@ -5,6 +5,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import com.elysium.softwork.BuildConfig
 import com.elysium.softwork.iam.data.network.AuthWebService
+import com.elysium.softwork.iam.domain.model.Company
 import com.elysium.softwork.iam.domain.model.User
 import com.elysium.softwork.shared.data.local.SharedPrefsManager
 import com.elysium.softwork.shared.data.network.BadRequestException
@@ -184,6 +185,69 @@ class AuthStoreImpl(
         return login(email, password)
     }
 
+    override suspend fun getCompanies(): Result<List<Company>> = runCatching {
+        unwrapList(webService.getCompanies())
+    }
+
+    override suspend fun associateCompany(membershipId: Long, companyId: Long): Result<User> =
+        runCatching {
+            val accountId = prefs.getLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID)
+                .takeIf { it != SharedPrefsManager.DEFAULT_LONG }
+                ?: error("No signed-in user account to associate")
+
+            // Load the live account to retain fields the local cache does not hold (`user_id`,
+            // `anonymous_name`). The response `password` is a BCrypt hash — never echo it back
+            // (that would re-hash it and break sign-in); send the plaintext password from prefs.
+            val current: User = unwrapList(webService.getUserAccounts())
+                .firstOrNull { it.user_account_id == accountId }
+                ?: error("User account $accountId not found")
+
+            val body = User(
+                user_id = current.user_id,
+                email = prefs.getString(SharedPrefsManager.KEY_USER_EMAIL) ?: current.email,
+                // Google-linked sessions cache a blank password, but the update DTO enforces
+                // @NotBlank. Substitute a non-blank placeholder so validation passes — the backend
+                // disables password checks for federated Google rows, so login state is unaffected.
+                password = prefs.getString(SharedPrefsManager.KEY_USER_PASSWORD)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: PLACEHOLDER_PASSWORD,
+                anonymous_name = current.anonymous_name,
+                membership_id = membershipId,
+                company_id = companyId,
+            )
+            val updated: User = unwrap(webService.updateUserAccount(accountId, body))
+
+            // Fetch the full user record (`GET /users/{id}`) for the first/last name — the
+            // user_accounts payload carries no name. Best-effort: the association already
+            // succeeded, so a names hiccup must not fail it.
+            val userId: Long? = updated.user_id ?: current.user_id
+            val userInfo: User? = userId?.let {
+                runCatching { unwrap(webService.getUser(it)) }.getOrNull()
+            }
+
+            // Commit the complete session snapshot so every context (dashboard greeting/avatar,
+            // company-scoped forum, assistant) reads real credentials without a logout cycle.
+            // Employee-profile provisioning is intentionally NOT chained here — it is handled
+            // downstream once the account ledger is updated.
+            prefs.putLong(SharedPrefsManager.KEY_USER_ACCOUNT_ID, accountId)
+            userId?.let { prefs.putLong(SharedPrefsManager.KEY_USER_ID, it) }
+            prefs.putLong(SharedPrefsManager.KEY_MEMBERSHIP_ID, membershipId)
+            prefs.putLong(SharedPrefsManager.KEY_COMPANY_ID, companyId)
+            (userInfo?.name ?: current.name)?.let {
+                prefs.putString(SharedPrefsManager.KEY_FIRST_NAME, it)
+            }
+            (userInfo?.last_name ?: current.last_name)?.let {
+                prefs.putString(SharedPrefsManager.KEY_LAST_NAME, it)
+            }
+            (updated.email ?: current.email)?.let {
+                prefs.putString(SharedPrefsManager.KEY_USER_EMAIL, it)
+            }
+            (updated.anonymous_name ?: current.anonymous_name)?.let {
+                prefs.putString(SharedPrefsManager.KEY_ANONYMOUS_NAME, it)
+            }
+            updated
+        }
+
     /**
      * Returns the active JWT, or `null` when there is no valid session.
      *
@@ -343,8 +407,30 @@ class AuthStoreImpl(
         return BadRequestException(parsed)
     }
 
+    /**
+     * Unwraps a list [response] into its body (empty list when absent). A `400` becomes a
+     * [BadRequestException]; any other non-2xx throws an [IllegalStateException] with the status.
+     */
+    private fun <T> unwrapList(response: Response<List<T>>): List<T> {
+        if (response.isSuccessful) {
+            return response.body().orEmpty()
+        }
+        val rawError: String? = runCatching { response.errorBody()?.string() }.getOrNull()
+        if (response.code() == HTTP_BAD_REQUEST) {
+            throw parseBadRequest(rawError)
+        }
+        error("HTTP ${response.code()} ${response.message().ifBlank { rawError ?: "request failed" }}")
+    }
+
     private companion object {
         const val HTTP_BAD_REQUEST: Int = 400
+
+        /**
+         * Non-blank placeholder for the `user_accounts` PUT password when the local session cached a
+         * blank one (Google-linked accounts). Satisfies the backend `@NotBlank` rule; the backend
+         * disables password checks for federated Google rows, so it never becomes a usable secret.
+         */
+        const val PLACEHOLDER_PASSWORD: String = "BypassPassword123!"
 
         /**
          * Marker for the placeholder/invalid JWT subject the backend rejects with `401`
